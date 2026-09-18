@@ -54,9 +54,11 @@ struct SettingsView: View {
 
                 section("About") {
                     Panel {
-                        PanelRow(title: "Nebula for Mac", detail: "Version \(AppInfo.version)") {
-                            Button("Releases") { if let u = URL(string: AppInfo.repo + "/releases") { NSWorkspace.shared.open(u) } }
-                                .buttonStyle(PillButtonStyle(filled: false))
+                        PanelRow(title: "Nebula for Mac", detail: model.updateTag.map { "Version \(AppInfo.version) · \($0) is out" } ?? "Version \(AppInfo.version) · up to date") {
+                            Button(model.updateTag == nil ? "Releases" : "Get the update") {
+                                if let u = URL(string: AppInfo.repo + "/releases/latest") { NSWorkspace.shared.open(u) }
+                            }
+                            .buttonStyle(PillButtonStyle(filled: model.updateTag != nil))
                         }
                         Hairline()
                         PanelRow(title: "Keyboard", detail: "Space play or pause · ← → skip · ↑ ↓ volume · F full screen · M mute · C subtitles · A audio · I info · N next episode · Esc back") { EmptyView() }

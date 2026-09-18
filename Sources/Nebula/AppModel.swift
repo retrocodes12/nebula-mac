@@ -91,6 +91,9 @@ final class AppModel: ObservableObject {
     @Published var progressVersion = 0
     @Published var libraryVersion = 0
 
+    /// A newer release than this build, when there is one ("v0.2.0").
+    @Published var updateTag: String?
+
     @Published var homeRows: [CatalogRow] = []
     @Published var homeLoading = false
     @Published var homeFailed = false
@@ -136,6 +139,25 @@ final class AppModel: ObservableObject {
             await cloud.pullAll(force: true)
             _ = await cloud.refreshProfile()
         }
+        Task { await checkForUpdate() }
+    }
+
+    /// One question to the releases page per launch. The app never downloads anything itself:
+    /// it says a newer one exists and opens the page.
+    func checkForUpdate() async {
+        guard let j = try? await stremio.getJSON("https://api.github.com/repos/retrocodes12/nebula-mac/releases/latest"),
+              let tag = j.text("tag_name") else { return }
+        if AppModel.isNewer(tag, than: AppInfo.version) { updateTag = tag }
+    }
+
+    static func isNewer(_ tag: String, than current: String) -> Bool {
+        func parts(_ v: String) -> [Int] { v.split(whereSeparator: { !$0.isNumber }).compactMap { Int($0) } }
+        let a = parts(tag), b = parts(current)
+        for i in 0..<max(a.count, b.count) {
+            let x = i < a.count ? a[i] : 0, y = i < b.count ? b[i] : 0
+            if x != y { return x > y }
+        }
+        return false
     }
 
     // MARK: toasts

@@ -49,6 +49,16 @@ jobs:
         run: dist/Nebula.app/Contents/MacOS/Nebula --smoke "https://storage.googleapis.com/shaka-demo-assets/angel-one-clearkey/dash.mpd" --keys abba271e8bcf552bbd2e86a434a9a5d9:69eaa802a6763af979e8d1940fb88392 --seconds 3
       - name: Smoke — HLS
         run: dist/Nebula.app/Contents/MacOS/Nebula --smoke "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8" --seconds 3
+      - name: Smoke — a live protected stream from the sports add-on, keys from its licence
+        continue-on-error: true
+        run: |
+          B=https://sports.nebulapro.xyz/sports/i/free
+          H=(-H "User-Agent: NebulaPlayer" -H "X-Nebula-Client: macos")
+          ID=$(curl -s -m 30 "${H[@]}" "$B/catalog/sports/streamed-events-live-now.json" | python3 -c "import json,sys; m=json.load(sys.stdin).get('metas',[]); print(m[0]['id'] if m else '')")
+          [ -z "$ID" ] && { echo "nothing live right now"; exit 0; }
+          URL=$(curl -s -m 60 "${H[@]}" "$B/stream/sports/$ID.json" | python3 -c "import json,sys; s=[x['url'] for x in json.load(sys.stdin).get('streams',[]) if '.mpd' in x.get('url','')]; print(s[0] if s else '')")
+          [ -z "$URL" ] && { echo "no protected card on $ID"; exit 0; }
+          dist/Nebula.app/Contents/MacOS/Nebula --smoke "$URL" --seconds 4 | sed -E 's#private/[a-f0-9]+#private/…#g'
       - name: Screens
         continue-on-error: true
         run: |

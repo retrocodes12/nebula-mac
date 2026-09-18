@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import NebulaCore
 
 struct RootView: View {
@@ -106,6 +107,19 @@ struct Sidebar: View {
                 .buttonStyle(.plain)
             }
             Spacer()
+            if let tag = model.updateTag {
+                Button(action: { if let u = URL(string: AppInfo.repo + "/releases/latest") { NSWorkspace.shared.open(u) } }) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "arrow.down.circle.fill").foregroundStyle(model.accent)
+                        Text("Update to \(tag)").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.ink)
+                        Spacer()
+                    }
+                    .padding(.horizontal, 10).frame(height: 34)
+                    .background(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.line))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).padding(.bottom, 6)
+            }
             Button(action: { model.select(.settings) }) {
                 HStack(spacing: 10) {
                     Circle().fill(Color(hex: model.profile?.avatar ?? "#636366")).frame(width: 28, height: 28)
