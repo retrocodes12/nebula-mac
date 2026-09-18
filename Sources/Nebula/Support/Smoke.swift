@@ -1,7 +1,7 @@
 import Foundation
 import NebulaCore
 
-/// `Nebula --smoke <address> [--keys kid:key,…] [--seconds n]`
+/// `Nebula --smoke <address> [--keys kid:key,…] [--seconds n] [--direct]`
 /// Plays with no window and no sound device, and exits 0 only if the clock moved. This is what
 /// proves, on a build machine, that the engine links, opens the network, reads the container
 /// and — with keys — decrypts.
@@ -13,14 +13,23 @@ enum Smoke {
         }
         func value(_ flag: String) -> String? { args.firstIndex(of: flag).flatMap { args.count > $0 + 1 ? args[$0 + 1] : nil } }
         let want = Double(value("--seconds") ?? "") ?? 4
-        final class State { var keys: [String: String] = [:]; var first: Double? }
+        final class State { var keys: [String: String] = [:]; var first: Double?; var viaProxy = false }
         let state = State()
         state.keys = ClearKey.fromFragment("#clearkey=" + (value("--keys") ?? ""))
         let mpv = MPVController(headless: true)
         let started = Date()
         Task { @MainActor in
+            // the same road the player takes: the loopback manifest cache, then the licence
+            var play = address
+            if ClearKey.looksLikeDash(address) && !args.contains("--direct") {
+                if let m = await ManifestProxy.shared.open(address, headers: [:], maxHeight: 0) {
+                    play = m.address
+                    if state.keys.isEmpty { state.keys = await ClearKey.resolve(xml: m.xml, using: Stremio()) }
+                }
+            }
             if state.keys.isEmpty && ClearKey.looksLikeDash(address) { state.keys = await ClearKey.resolve(manifestUrl: address, using: Stremio()) }
-            mpv.load(url: address, keys: state.keys)
+            state.viaProxy = play != address
+            mpv.load(url: play, keys: state.keys)
         }
         // the engine publishes on the main queue, so the main run loop has to turn
         let timer = Timer(timeInterval: 0.25, repeats: true) { _ in
@@ -29,7 +38,7 @@ enum Smoke {
                 let video = mpv.tracks.first { $0.type == "video" && $0.selected }
                 let line: JSONObject = ["verdict": verdict, "timePos": mpv.timePos, "duration": mpv.duration, "height": mpv.videoHeight,
                                         "video": video?.codec ?? "", "tracks": mpv.tracks.count, "keys": state.keys.count,
-                                        "failure": mpv.failure ?? "", "waited": waited, "ffmpeg": mpv.string("ffmpeg-version"), "mpv": mpv.string("mpv-version")]
+                                        "failure": mpv.failure ?? "", "waited": waited, "viaProxy": state.viaProxy, "ffmpeg": mpv.string("ffmpeg-version"), "mpv": mpv.string("mpv-version")]
                 print(JSON.text(line))
                 exit(code)
             }

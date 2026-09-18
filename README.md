@@ -28,11 +28,13 @@ Sources/NebulaCore   plain Foundation, no UI — builds and tests on Linux as we
   Library.swift        My List, with removal tombstones
   Cloud.swift          profile + sync client; the wire format is the shared player's, verbatim
   StreamBadges.swift   the plate, badges and facts read out of a stream row's text
+  DashManifest.swift   one picture quality and an absolute base, for the loopback manifest cache
 Sources/Nebula       the app — SwiftUI + libmpv (through MPVKit), macOS only
-  Player/              MPVController (the engine), VideoSurface (its Metal layer), PlayerScreen (the chrome)
+  Player/              MPVController (the engine), VideoSurface (its Metal layer), PlayerScreen (the chrome),
+                       ManifestProxy (a loopback cache for DASH manifests: 45 s to the first frame became 7)
   Views/               Home, Search + Discover, title page, streams, catalog, My List, Add-ons, Settings
   Support/             theme, image loading, and the three build-machine modes below
-Tests/NebulaCoreTests  28 tests; sync is driven end to end against a stand-in server
+Tests/NebulaCoreTests  34 tests; sync is driven end to end against a stand-in server
 ```
 
 `swift test` runs the core suite anywhere Swift runs. `scripts/bundle.sh` builds a universal `Nebula.app`, draws its icon, signs it ad hoc and packs a dmg and a zip.

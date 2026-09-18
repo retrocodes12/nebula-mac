@@ -268,11 +268,19 @@ struct PlayerScreen: View {
         let s = request.stream
         Task {
             var keys = s.clearKeys
-            if keys.isEmpty && ClearKey.looksLikeDash(s.url) {
-                keys = await ClearKey.resolve(manifestUrl: s.url, using: model.stremio)
+            var address = s.url
+            if ClearKey.looksLikeDash(s.url) {
+                // through the loopback manifest cache (ManifestProxy says why); the same fetch
+                // gives the text the licence address is read from
+                if let m = await ManifestProxy.shared.open(s.url, headers: s.headers, maxHeight: model.prefs.maxHeight) {
+                    address = m.address
+                    if keys.isEmpty { keys = await ClearKey.resolve(xml: m.xml, using: model.stremio) }
+                } else if keys.isEmpty {
+                    keys = await ClearKey.resolve(manifestUrl: s.url, using: model.stremio)
+                }
                 protected = !keys.isEmpty
             }
-            mpv.load(url: s.url, startAt: request.startAt, keys: keys, headers: s.headers)
+            mpv.load(url: address, startAt: request.startAt, keys: keys, headers: s.headers)
         }
         Task {
             let t = request.target

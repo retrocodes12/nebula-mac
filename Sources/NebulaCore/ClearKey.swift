@@ -69,6 +69,12 @@ public enum ClearKey {
         return keys(fromLicence: j)
     }
 
+    /// The same, from manifest text already in hand.
+    public static func resolve(xml: String, using stremio: Stremio) async -> [String: String] {
+        guard let lic = licenceUrl(inManifest: xml), let j = try? await stremio.getJSON(lic) else { return [:] }
+        return keys(fromLicence: j)
+    }
+
     public static func looksLikeDash(_ url: String) -> Bool {
         let path = url.split(separator: "?").first.map(String.init) ?? url
         return path.lowercased().hasSuffix(".mpd")

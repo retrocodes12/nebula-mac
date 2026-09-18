@@ -103,6 +103,69 @@ final class ClearKeyTests: XCTestCase {
     }
 }
 
+final class DashManifestTests: XCTestCase {
+    let mpd = """
+    <?xml version="1.0"?>
+    <MPD type="dynamic" minimumUpdatePeriod="PT5S">
+      <Period id="1">
+        <AdaptationSet mimeType="video/mp4">
+          <Representation id="1" height="576" bandwidth="1400000"><SegmentTemplate media="v1_$Number$.mp4"/></Representation>
+          <Representation id="5" height="720" bandwidth="4200000"><SegmentTemplate media="v5_$Number$.mp4"/></Representation>
+          <Representation id="4" height="720" bandwidth="2099968"><SegmentTemplate media="v4_$Number$.mp4"/></Representation>
+          <Representation id="6" height="1080" bandwidth="8200000"><SegmentTemplate media="v6_$Number$.mp4"/></Representation>
+        </AdaptationSet>
+        <AdaptationSet mimeType="audio/mp4" lang="en">
+          <Representation id="a1" bandwidth="128000"/>
+          <Representation id="a2" bandwidth="64000"/>
+        </AdaptationSet>
+      </Period>
+    </MPD>
+    """
+
+    func ids(_ xml: String) -> [String] {
+        DashManifest.matches(DashManifest.reRep, xml).compactMap { DashManifest.attr("id", in: DashManifest.openTag($0)) }
+    }
+
+    func testKeepsTheBestPictureAndEverySoundtrack() {
+        XCTAssertEqual(ids(DashManifest.oneVideoQuality(mpd)), ["6", "a1", "a2"])
+    }
+
+    func testHonoursACeilingAndPicksTheRicherOfTwoAtThatHeight() {
+        XCTAssertEqual(ids(DashManifest.oneVideoQuality(mpd, maxHeight: 720)), ["5", "a1", "a2"])
+        XCTAssertEqual(ids(DashManifest.oneVideoQuality(mpd, maxHeight: 240)), ["1", "a1", "a2"], "all taller than asked: the smallest")
+    }
+
+    func testGivesARelativeManifestItsOwnFolderAsBase() {
+        let out = DashManifest.absoluteBase(mpd, manifestUrl: "https://h.test/live/ch1/manifest.mpd?token=abc")
+        XCTAssertTrue(out.contains("<MPD type=\"dynamic\" minimumUpdatePeriod=\"PT5S\"><BaseURL>https://h.test/live/ch1/</BaseURL>"))
+    }
+
+    func testLeavesAnAbsoluteBaseAloneAndResolvesARelativeOne() {
+        let abs = mpd.replacingOccurrences(of: "<Period id=\"1\">", with: "<BaseURL>https://cdn.test/x/</BaseURL><Period id=\"1\">")
+        XCTAssertEqual(DashManifest.absoluteBase(abs, manifestUrl: "https://h.test/a/m.mpd"), abs)
+        let rel = mpd.replacingOccurrences(of: "<Period id=\"1\">", with: "<BaseURL>dash/</BaseURL><Period id=\"1\">")
+        XCTAssertTrue(DashManifest.absoluteBase(rel, manifestUrl: "https://h.test/a/m.mpd").contains("<BaseURL>https://h.test/a/dash/</BaseURL>"))
+    }
+
+    /// `NEBULA_MPD_IN=<file> NEBULA_MPD_URL=<its address> NEBULA_MPD_OUT=<file>` runs the preparer
+    /// over a manifest captured from a real source, so the result can be handed to FFmpeg.
+    func testPrepareACapturedManifest() throws {
+        let env = ProcessInfo.processInfo.environment
+        guard let src = env["NEBULA_MPD_IN"], let out = env["NEBULA_MPD_OUT"] else { throw XCTSkip("no captured manifest given") }
+        let xml = try String(contentsOfFile: src, encoding: .utf8)
+        let done = DashManifest.prepare(xml, manifestUrl: env["NEBULA_MPD_URL"] ?? "https://h.test/m.mpd", maxHeight: Int(env["NEBULA_MPD_MAX"] ?? "") ?? 0)
+        try done.write(toFile: out, atomically: true, encoding: .utf8)
+        XCTAssertLessThan(done.count, xml.count + 200)
+    }
+
+    func testANestedBaseIsNotMistakenForTheTopOne() {
+        let nested = mpd.replacingOccurrences(of: "<AdaptationSet mimeType=\"video/mp4\">", with: "<AdaptationSet mimeType=\"video/mp4\"><BaseURL>video/</BaseURL>")
+        let out = DashManifest.absoluteBase(nested, manifestUrl: "https://h.test/a/m.mpd")
+        XCTAssertTrue(out.contains("<BaseURL>https://h.test/a/</BaseURL>"))
+        XCTAssertTrue(out.contains("<BaseURL>video/</BaseURL>"))
+    }
+}
+
 final class IdsTests: XCTestCase {
     func testSeriesId() {
         XCTAssertEqual(Ids.seriesId(of: "tt123:1:2"), "tt123")

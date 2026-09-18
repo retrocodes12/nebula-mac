@@ -52,6 +52,11 @@ public final class Prefs: @unchecked Sendable {
         get { (get("hwdec") as? Bool) ?? true }
         set { put("hwdec", newValue) }
     }
+    /// The tallest picture a stream with several qualities is played at; 0 = the best it has.
+    public var maxHeight: Int {
+        get { (get("maxHeight") as? NSNumber)?.intValue ?? 0 }
+        set { put("maxHeight", newValue) }
+    }
     public var recentSearches: [String] {
         get { (get("recent_q") as? [String]) ?? [] }
         set { put("recent_q", Array(newValue.prefix(10))) }

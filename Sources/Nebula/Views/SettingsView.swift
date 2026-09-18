@@ -8,6 +8,7 @@ struct SettingsView: View {
     @State private var resume = true
     @State private var autoplayNext = true
     @State private var hwdec = true
+    @State private var maxHeight = 0
 
     var body: some View {
         ScrollView {
@@ -46,6 +47,10 @@ struct SettingsView: View {
                             HStack(spacing: 6) { ForEach([5, 10, 15, 30], id: \.self) { s in Chip(text: "\(s) s", on: seekStep == s) { seekStep = s } } }
                         }
                         Hairline()
+                        PanelRow(title: "Picture quality", detail: "For streams that come in several qualities, such as live sports. Lower it on a slow connection.") {
+                            HStack(spacing: 6) { ForEach([0, 1080, 720, 480], id: \.self) { h in Chip(text: h == 0 ? "Best" : "\(h)p", on: maxHeight == h) { maxHeight = h } } }
+                        }
+                        Hairline()
                         PanelRow(title: "Decode on the graphics chip", detail: "Cooler and quieter. Switch it off if a film shows a broken picture.") {
                             Toggle("", isOn: $hwdec).toggleStyle(.switch).labelsHidden().controlSize(.small)
                         }
@@ -72,12 +77,13 @@ struct SettingsView: View {
         .background(Theme.bg)
         .onAppear {
             seekStep = model.prefs.seekStep; resume = model.prefs.resume
-            autoplayNext = model.prefs.autoplayNext; hwdec = model.prefs.hardwareDecoding
+            autoplayNext = model.prefs.autoplayNext; hwdec = model.prefs.hardwareDecoding; maxHeight = model.prefs.maxHeight
         }
         .onChange(of: seekStep) { model.prefs.seekStep = $0 }
         .onChange(of: resume) { model.prefs.resume = $0 }
         .onChange(of: autoplayNext) { model.prefs.autoplayNext = $0 }
         .onChange(of: hwdec) { model.prefs.hardwareDecoding = $0 }
+        .onChange(of: maxHeight) { model.prefs.maxHeight = $0 }
     }
 
     private func section<C: View>(_ title: String, @ViewBuilder content: () -> C) -> some View {

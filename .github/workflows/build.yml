@@ -58,7 +58,10 @@ jobs:
           [ -z "$ID" ] && { echo "nothing live right now"; exit 0; }
           URL=$(curl -s -m 60 "${H[@]}" "$B/stream/sports/$ID.json" | python3 -c "import json,sys; s=[x['url'] for x in json.load(sys.stdin).get('streams',[]) if '.mpd' in x.get('url','')]; print(s[0] if s else '')")
           [ -z "$URL" ] && { echo "no protected card on $ID"; exit 0; }
+          echo "through the app's manifest cache:"
           dist/Nebula.app/Contents/MacOS/Nebula --smoke "$URL" --seconds 4 | sed -E 's#private/[a-f0-9]+#private/…#g'
+          echo "straight from the source, for comparison:"
+          dist/Nebula.app/Contents/MacOS/Nebula --smoke "$URL" --seconds 4 --direct | sed -E 's#private/[a-f0-9]+#private/…#g'
       - name: Screens
         continue-on-error: true
         run: |
