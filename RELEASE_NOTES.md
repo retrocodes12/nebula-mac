@@ -3,3 +3,7 @@ Nebula for Mac — a native Swift app (SwiftUI, libmpv engine). Apple silicon an
 **Install**: open `Nebula.dmg`, drag Nebula to Applications. The app is not notarised, so the first time, right-click it and choose **Open** (or allow it in System Settings › Privacy & Security).
 
 In this version: add-ons and their catalogs, search and Discover, title pages with seasons and episodes, streams with badges, the player (every common format, protected streams, subtitles from add-ons, audio and subtitle menus, speed, next episode), Continue Watching, My List, mark as watched, and a Nebula profile that syncs add-ons, progress and My List with your TV, phone and browser.
+
+Live streams that come in several qualities start in a few seconds: the app reads the stream's manifest once and hands the player one quality (Settings › Playback › Picture quality picks which).
+
+This first version was built and checked entirely on build machines — it compiles for both chips, plays a plain file, an HLS playlist, protected DASH and a live protected sports stream there, and every screen was looked at in screenshots from a real macOS window. It has not yet been run on a Mac on someone's desk. If something is off on yours, please open an issue.
