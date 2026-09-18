@@ -118,6 +118,7 @@ struct StreamRow: View {
         let match = StreamBadges.match(raw)
         let facts = StreamBadges.facts(videoSize: stream.videoSize, text: stream.title, fired: [])
         let name = StreamBadges.cleanName(stream.name, addonName: addonName)
+        let desc = StreamBadges.cleanDesc(facts.desc)
         Button(action: action) {
             HStack(spacing: 16) {
                 VStack(spacing: 1) {
@@ -128,8 +129,8 @@ struct StreamRow: View {
                 .background(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.line))
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(name.isEmpty ? (facts.desc.isEmpty ? "Stream" : facts.desc) : name).font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.ink).lineLimit(1)
-                    if !name.isEmpty && !facts.desc.isEmpty { Text(facts.desc).font(.system(size: 12)).foregroundStyle(Theme.label2).lineLimit(2) }
+                    Text(name.isEmpty ? (desc.isEmpty ? "Stream" : desc) : name).font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.ink).lineLimit(1)
+                    if !name.isEmpty && !desc.isEmpty { Text(desc).font(.system(size: 12)).foregroundStyle(Theme.label2).lineLimit(2) }
                     if !facts.line.isEmpty { Text(facts.line).font(.system(size: 11, design: .monospaced)).foregroundStyle(Theme.label3).lineLimit(1) }
                 }
                 Spacer(minLength: 12)

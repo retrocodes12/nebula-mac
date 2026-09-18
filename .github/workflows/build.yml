@@ -54,6 +54,7 @@ jobs:
         run: |
           mkdir -p shots "$RUNNER_TEMP/store"
           NEBULA_STORE_DIR="$RUNNER_TEMP/store" NEBULA_SHOTS_ADDON="https://sports.nebulapro.xyz/sports/i/free/manifest.json" \
+          NEBULA_SHOTS_PLAY="https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8" NEBULA_MPV_DEBUG=0 \
             dist/Nebula.app/Contents/MacOS/Nebula --shots "$PWD/shots" &
           PID=$!
           for i in $(seq 1 150); do kill -0 $PID 2>/dev/null || break; sleep 2; done

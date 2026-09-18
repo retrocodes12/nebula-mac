@@ -254,6 +254,14 @@ final class BadgeTests: XCTestCase {
         XCTAssertEqual(StreamBadges.resRank("a 720p"), 2)
     }
 
+    func testRowsDoNotRepeatThePlateOrTalkInFormats() {
+        XCTAssertEqual(StreamBadges.cleanName("Nebula Sports HD · FANCODE", addonName: "Nebula Sports"), "FANCODE")
+        XCTAssertEqual(StreamBadges.cleanName("Nebula Sports FHD · TNT SPORTS", addonName: "Nebula Sports"), "TNT SPORTS")
+        XCTAssertEqual(StreamBadges.cleanDesc("1080p ClearKey DASH · Plays only in Nebula Player"), "")
+        XCTAssertEqual(StreamBadges.cleanDesc("720p · English commentary"), "English commentary")
+        XCTAssertEqual(StreamBadges.cleanName("HDTV Rip", addonName: nil), "HDTV Rip")
+    }
+
     func testLanguages() {
         let f = StreamBadges.facts(videoSize: 2_147_483_648, text: "Film\nHindi · English · 5 Mbps 🇫🇷")
         XCTAssertEqual(f.langs, "Hindi + English + French")

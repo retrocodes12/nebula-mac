@@ -125,7 +125,28 @@ public enum StreamBadges {
         t = strip(reRes, t)
         t = strip(reSeps, t, with: " · ")
         t = strip(reSpaces, t)
-        return t.trimmingCharacters(in: CharacterSet(charactersIn: "·•|,- "))
+        // "HD · FANCODE": a bare quality word is the plate's job too
+        let parts = t.components(separatedBy: " · ").filter { !hit(reBareRes, $0.trimmingCharacters(in: .whitespaces)) }
+        return parts.joined(separator: " · ").trimmingCharacters(in: CharacterSet(charactersIn: "·•|,- "))
+    }
+
+    static let reBareRes = rx(#"^(hd|sd|fhd|uhd|full\s*hd|ultra\s*hd)$"#)
+    static let reJargon = rx(#"\b(clearkey|clear\s*key|mpeg-?dash|dash|hls|m3u8|mpd|drm)\b"#)
+    static let reOnlyHere = rx(#"plays?\s+only\s+in\s+nebula(\s+player)?"#)
+
+    /// The line under a row's name. The plate already says the resolution, the app never talks
+    /// in stream formats, and "plays only in Nebula" is addressed to every other player.
+    public static func cleanDesc(_ desc: String) -> String {
+        var out: [String] = []
+        for tokRaw in desc.components(separatedBy: " · ") {
+            var t = strip(reOnlyHere, tokRaw, with: "")
+            t = strip(reJargon, t, with: "")
+            t = strip(reRes, t, with: "")
+            t = strip(reSpaces, t).trimmingCharacters(in: CharacterSet(charactersIn: "·•|,- "))
+            if t.isEmpty || out.contains(t) { continue }
+            out.append(t)
+        }
+        return out.joined(separator: " · ")
     }
 
     public struct Facts: Equatable, Sendable {

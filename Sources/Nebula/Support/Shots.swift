@@ -57,6 +57,22 @@ enum Shots {
                 await settle(atLeast: t == .search ? 5 : 1.5) { true }
                 await snap(window, dir, "0\(7 + i)-\(t.rawValue)")
             }
+            // the player, in the real window: the picture proves the Metal path, not just the decoder
+            if let address = ProcessInfo.processInfo.environment["NEBULA_SHOTS_PLAY"], !address.isEmpty {
+                m.select(.home)
+                let item = MetaItem(id: "shots", type: "link", name: "Big Buck Bunny")
+                m.play(StreamItem(name: "", title: "", url: address), target: StreamsTarget(type: "link", id: "", item: item, addonUrl: ""), from: nil)
+                await pause(9)                         // long enough to be playing, and for the chrome to let go
+                await snap(window, dir, "11-player-clean")
+                // Space pauses, and a paused player keeps its chrome up
+                if let ev = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                             windowNumber: window.windowNumber, context: nil, characters: " ", charactersIgnoringModifiers: " ",
+                                             isARepeat: false, keyCode: 49) { NSApp.postEvent(ev, atStart: false) }
+                await pause(1.5)
+                await snap(window, dir, "12-player-chrome")
+                m.player = nil
+                await pause(1)
+            }
             log("done")
             exit(0)
         }

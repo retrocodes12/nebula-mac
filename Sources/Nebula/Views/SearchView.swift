@@ -184,34 +184,65 @@ struct DiscoverSection: View {
     }
 }
 
-/// A pill that opens a menu: the label small above, the value under it.
+/// A pill that opens a list: the label small, the value beside it. SwiftUI's own Menu redraws
+/// its label in the system's style on a Mac, so this is a button and a popover instead.
 struct PickMenu: View {
     let label: String
     let value: String
     let options: [(String, String)]
     let current: String
     let onPick: (String) -> Void
+    @State private var open = false
 
     var body: some View {
-        Menu {
-            ForEach(options, id: \.0) { o in
-                Button(action: { onPick(o.0) }) {
-                    if o.0 == current { Label(o.1, systemImage: "checkmark") } else { Text(o.1) }
-                }
-            }
-        } label: {
+        Button(action: { open.toggle() }) {
             HStack(spacing: 8) {
                 Text(label.uppercased()).font(.system(size: 10, weight: .medium, design: .monospaced)).tracking(1).foregroundStyle(Theme.label3)
-                Text(value).font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.ink).lineLimit(1)
+                Text(value).font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.ink).lineLimit(1).frame(maxWidth: 220)
                 Image(systemName: "chevron.down").font(.system(size: 9, weight: .bold)).foregroundStyle(Theme.label3)
             }
             .padding(.horizontal, 14).frame(height: 34)
-            .background(Capsule().fill(Theme.surface))
+            .background(Capsule().fill(open ? Theme.surface2 : Theme.surface))
             .overlay(Capsule().strokeBorder(Theme.line))
             .contentShape(Capsule())
+            .fixedSize()
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
+        .buttonStyle(.plain)
+        .popover(isPresented: $open, arrowEdge: .bottom) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(options, id: \.0) { o in
+                        PickRow(text: o.1, on: o.0 == current) { open = false; onPick(o.0) }
+                    }
+                }
+                .padding(6)
+            }
+            .frame(width: 280)
+            .frame(maxHeight: 360)
+            .preferredColorScheme(.dark)
+        }
+    }
+}
+
+struct PickRow: View {
+    let text: String
+    let on: Bool
+    let action: () -> Void
+    @State private var hover = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack {
+                Text(text).font(.system(size: 13, weight: on ? .semibold : .regular)).lineLimit(1)
+                Spacer()
+                if on { Image(systemName: "checkmark").font(.system(size: 11, weight: .bold)) }
+            }
+            .foregroundStyle(Theme.ink)
+            .padding(.horizontal, 10).frame(height: 30)
+            .background(RoundedRectangle(cornerRadius: 7).fill(hover ? Theme.surface2 : Color.clear))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hover = $0 }
     }
 }
