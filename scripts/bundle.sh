@@ -19,12 +19,20 @@ cp "$BIN/Nebula" "$APP/Contents/MacOS/Nebula"
 cp -R Resources/badges "$APP/Contents/Resources/badges"
 sed -e "s/__VERSION__/$VERSION/" -e "s/__BUILD__/$BUILD/" Resources/Info.plist > "$APP/Contents/Info.plist"
 
-# any frameworks the engine ships as dynamic libraries ride along inside the app
+# The engine's libraries arrive as frameworks beside the binary. Static ones are already inside
+# it; only one the binary actually loads at run time has to ride along inside the app.
 shopt -s nullglob
-FW=("$BIN"/*.framework)
-if [ ${#FW[@]} -gt 0 ]; then
-  mkdir -p "$APP/Contents/Frameworks"
-  for f in "${FW[@]}"; do cp -R "$f" "$APP/Contents/Frameworks/"; done
+LINKS="$(otool -L "$APP/Contents/MacOS/Nebula")"
+for f in "$BIN"/*.framework; do
+  name="$(basename "$f" .framework)"
+  if echo "$LINKS" | grep -q "/$name.framework/"; then
+    mkdir -p "$APP/Contents/Frameworks"
+    ditto "$f" "$APP/Contents/Frameworks/$name.framework"
+    codesign --force --sign - "$APP/Contents/Frameworks/$name.framework"
+    echo "carried: $name"
+  fi
+done
+if [ -d "$APP/Contents/Frameworks" ]; then
   install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP/Contents/MacOS/Nebula" 2>/dev/null || true
 fi
 
@@ -38,7 +46,7 @@ done
 iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
 
 # no Apple developer account: an ad-hoc signature, which Apple silicon insists on at the least
-codesign --force --deep --sign - "$APP"
+codesign --force --sign - "$APP"
 codesign --verify --deep --strict "$APP"
 
 ( cd dist && ditto -c -k --keepParent Nebula.app Nebula-mac.zip )

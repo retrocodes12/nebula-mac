@@ -20,6 +20,8 @@ final class ImageLoader: @unchecked Sendable {
         cache.totalCostLimit = 160 << 20
     }
 
+    private func count(_ d: Int) { lock.lock(); inFlight += d; lock.unlock() }
+
     var busy: Bool { lock.lock(); defer { lock.unlock() }; return inFlight > 0 }
 
     func cached(_ url: String) -> NSImage? { cache.object(forKey: url as NSString) }
@@ -27,8 +29,8 @@ final class ImageLoader: @unchecked Sendable {
     func load(_ address: String) async -> NSImage? {
         if let c = cached(address) { return c }
         guard let url = URL(string: address) else { return nil }
-        lock.lock(); inFlight += 1; lock.unlock()
-        defer { lock.lock(); inFlight -= 1; lock.unlock() }
+        count(1)
+        defer { count(-1) }
         guard let (data, resp) = try? await session.data(from: url),
               (resp as? HTTPURLResponse).map({ (200...299).contains($0.statusCode) }) ?? true,
               let img = NSImage(data: data) else { return nil }
