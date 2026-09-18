@@ -1,0 +1,93 @@
+name: build
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+    paths-ignore: ['**.md']
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core:
+    name: Core tests (Linux)
+    runs-on: ubuntu-latest
+    container: swift:6.0-jammy
+    steps:
+      - uses: actions/checkout@v4
+      - run: swift test
+
+  mac:
+    name: App (macOS)
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: |
+          sw_vers
+          swift --version
+          xcodebuild -version
+      - uses: actions/cache@v4
+        with:
+          path: .build
+          key: spm-${{ runner.os }}-${{ hashFiles('Package.swift') }}-v1
+      - name: Core tests
+        run: swift test
+      - name: Bundle
+        run: scripts/bundle.sh
+      - name: What the binary links
+        run: |
+          otool -L dist/Nebula.app/Contents/MacOS/Nebula | head -40
+          du -sh dist/Nebula.app dist/Nebula.dmg dist/Nebula-mac.zip
+      - name: Smoke — a plain file over https
+        run: dist/Nebula.app/Contents/MacOS/Nebula --smoke "https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4" --seconds 3
+      - name: Smoke — protected DASH, keys given
+        run: dist/Nebula.app/Contents/MacOS/Nebula --smoke "https://storage.googleapis.com/shaka-demo-assets/angel-one-clearkey/dash.mpd" --keys abba271e8bcf552bbd2e86a434a9a5d9:69eaa802a6763af979e8d1940fb88392 --seconds 3
+      - name: Smoke — HLS
+        run: dist/Nebula.app/Contents/MacOS/Nebula --smoke "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8" --seconds 3
+      - name: Screens
+        continue-on-error: true
+        run: |
+          mkdir -p shots "$RUNNER_TEMP/store"
+          NEBULA_STORE_DIR="$RUNNER_TEMP/store" NEBULA_SHOTS_ADDON="https://sports.nebulapro.xyz/sports/i/free/manifest.json" \
+            dist/Nebula.app/Contents/MacOS/Nebula --shots "$PWD/shots" &
+          PID=$!
+          for i in $(seq 1 150); do kill -0 $PID 2>/dev/null || break; sleep 2; done
+          kill $PID 2>/dev/null || true
+          ls -la shots
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shots
+          path: shots
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Nebula-mac
+          path: |
+            dist/Nebula.dmg
+            dist/Nebula-mac.zip
+
+  release:
+    name: Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [core, mac]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: Nebula-mac
+          path: dist
+      - name: Cut the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          gh release delete "$TAG" --yes 2>/dev/null || true
+          gh release create "$TAG" dist/Nebula.dmg dist/Nebula-mac.zip --title "Nebula for Mac $TAG" --notes-file RELEASE_NOTES.md
