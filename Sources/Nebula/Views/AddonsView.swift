@@ -14,7 +14,7 @@ struct AddonsView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Add-ons").font(.system(size: 30, weight: .bold)).foregroundStyle(Theme.ink)
                     Text("Add-ons bring the catalogs, the details, the streams and the subtitles. Nebula asks them in the order below.")
-                        .font(.system(size: 13)).foregroundStyle(Theme.label2).frame(maxWidth: 560, alignment: .leading)
+                        .font(.system(size: 13)).foregroundStyle(Theme.label2).frame(maxWidth: Theme.cap(560), alignment: .leading)
                 }
                 .padding(.top, 56)
 
@@ -31,7 +31,7 @@ struct AddonsView: View {
                     }
                     if let e = error { Text(e).font(.system(size: 12.5)).foregroundStyle(Theme.danger) }
                 }
-                .frame(maxWidth: 720)
+                .frame(maxWidth: Theme.cap(720))
 
                 Panel {
                     ForEach(Array(model.addons.enumerated()), id: \.element.manifestUrl) { i, a in
@@ -39,7 +39,7 @@ struct AddonsView: View {
                         row(a, i)
                     }
                 }
-                .frame(maxWidth: 720)
+                .frame(maxWidth: Theme.cap(720))
             }
             .padding(.horizontal, Theme.pad).padding(.bottom, 50)
         }

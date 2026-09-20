@@ -22,6 +22,18 @@ enum Theme {
     #endif
 }
 
+extension Theme {
+    /// A window caps a reading column at a comfortable width. A phone is narrower than any of
+    /// those caps already, so there it means "fill what there is".
+    static func cap(_ points: CGFloat) -> CGFloat {
+        #if os(iOS)
+        return .infinity
+        #else
+        return points
+        #endif
+    }
+}
+
 extension Color {
     init(hex: String) {
         let h = hex.trimmingCharacters(in: CharacterSet(charactersIn: "#"))

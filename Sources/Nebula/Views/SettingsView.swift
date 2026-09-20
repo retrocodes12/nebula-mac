@@ -69,7 +69,7 @@ struct SettingsView: View {
                     }
                 }
             }
-            .frame(maxWidth: 720, alignment: .leading)
+            .frame(maxWidth: Theme.cap(720), alignment: .leading)
             .padding(.horizontal, Theme.pad).padding(.bottom, 50)
             .frame(maxWidth: .infinity, alignment: .leading)
         }

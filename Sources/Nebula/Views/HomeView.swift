@@ -92,7 +92,7 @@ struct Hero: View {
                 .frame(maxWidth: 360, maxHeight: 110, alignment: .bottomLeading)
                 Text(facts(item)).font(.system(size: 12, weight: .medium, design: .monospaced)).foregroundStyle(.white.opacity(0.75))
                 if let d = item.description {
-                    Text(d).font(.system(size: 14)).foregroundStyle(.white.opacity(0.82)).lineLimit(3).frame(maxWidth: 520, alignment: .leading)
+                    Text(d).font(.system(size: 14)).foregroundStyle(.white.opacity(0.82)).lineLimit(3).frame(maxWidth: Theme.cap(520), alignment: .leading)
                 }
                 HStack(spacing: 12) {
                     Button(action: { model.open(item, addonUrl: addon.manifestUrl) }) {

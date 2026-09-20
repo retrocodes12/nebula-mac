@@ -29,7 +29,7 @@ struct SearchView: View {
                 .padding(.horizontal, 16).frame(height: 46)
                 .background(RoundedRectangle(cornerRadius: 12).fill(Theme.surface))
                 .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(focused ? Color.white.opacity(0.5) : Theme.line))
-                .frame(maxWidth: 640)
+                .frame(maxWidth: Theme.cap(640))
                 .padding(.horizontal, Theme.pad).padding(.top, 56)
 
                 if submitted.isEmpty {
