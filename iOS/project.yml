@@ -63,3 +63,15 @@ targets:
         CODE_SIGNING_REQUIRED: NO
         CODE_SIGNING_ALLOWED: NO
         CODE_SIGN_ENTITLEMENTS: ""
+
+# XcodeGen does not make a scheme unless one is asked for, and xcodebuild needs one by name. The
+# first run only found "Nebula" because the Swift package exports schemes for ITS products.
+schemes:
+  NebulaPhone:
+    build:
+      targets:
+        NebulaPhone: all
+    run:
+      config: Debug
+    archive:
+      config: Release

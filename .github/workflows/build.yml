@@ -101,7 +101,9 @@ jobs:
           path: ~/Library/Caches/org.swift.swiftpm
           key: spm-ios-${{ hashFiles('Package.swift', 'iOS/project.yml') }}-v1
       - name: Generate the project
-        run: cd iOS && xcodegen generate
+        run: |
+          cd iOS && xcodegen generate
+          xcodebuild -project Nebula.xcodeproj -list
       - name: Build for a phone (unsigned — whoever installs it signs it)
         run: |
           VERSION="$(tr -d '[:space:]' < VERSION)"
