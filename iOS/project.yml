@@ -51,7 +51,7 @@ targets:
         PRODUCT_NAME: Nebula
         PRODUCT_BUNDLE_IDENTIFIER: com.nebula.player.ios
         INFOPLIST_FILE: ../Resources/iOS/Info.plist
-        MARKETING_VERSION: "0.1.0"
+        MARKETING_VERSION: "0.2.0"
         CURRENT_PROJECT_VERSION: "1"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         TARGETED_DEVICE_FAMILY: "1,2"
