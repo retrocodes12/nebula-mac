@@ -267,20 +267,9 @@ struct PlayerScreen: View {
         mpv.setVolume(model.prefs.volume)
         let s = request.stream
         Task {
-            var keys = s.clearKeys
-            var address = s.url
-            if ClearKey.looksLikeDash(s.url) {
-                // through the loopback manifest cache (ManifestProxy says why); the same fetch
-                // gives the text the licence address is read from
-                if let m = await ManifestProxy.shared.open(s.url, headers: s.headers, maxHeight: model.prefs.maxHeight) {
-                    address = m.address
-                    if keys.isEmpty { keys = await ClearKey.resolve(xml: m.xml, using: model.stremio) }
-                } else if keys.isEmpty {
-                    keys = await ClearKey.resolve(manifestUrl: s.url, using: model.stremio)
-                }
-                protected = !keys.isEmpty
-            }
-            mpv.load(url: address, startAt: request.startAt, keys: keys, headers: s.headers)
+            let got = await PlaybackRules.source(for: s, maxHeight: model.prefs.maxHeight, stremio: model.stremio)
+            protected = !got.keys.isEmpty
+            mpv.load(url: got.address, startAt: request.startAt, keys: got.keys, headers: s.headers)
         }
         Task {
             let t = request.target
@@ -300,21 +289,12 @@ struct PlayerScreen: View {
     /// Add-on captions go in once the file is open; the viewer's language is selected, the rest wait in the menu.
     private func attachSubs() {
         guard mpv.loaded, !subsAdded else { return }
-        let all = request.stream.subtitles + addonSubs
-        if all.isEmpty && addonSubs.isEmpty && request.stream.subtitles.isEmpty { subsAdded = true; return }
-        subsAdded = true
         let want = model.prefs.subLang
-        var perLang: [String: Int] = [:]
-        var picked = false
-        for s in all {
-            let n = (perLang[s.lang] ?? 0) + 1
-            perLang[s.lang] = n
-            if n > 12 { continue }
-            let pick = !picked && !want.isEmpty && s.lang == want
-            if pick { picked = true }
-            let name = Lang.name(s.lang)
-            mpv.addSubtitle(url: s.url, lang: s.lang, title: n > 1 ? "\(name.isEmpty ? s.lang : name) \(n)" : "", select: pick)
-        }
+        let plan = PlaybackRules.subtitlePlan(stream: request.stream, addon: addonSubs, want: want)
+        // nothing external to add: the file's own tracks are left exactly as the engine chose them
+        if plan.isEmpty { subsAdded = true; return }
+        subsAdded = true
+        for p in plan { mpv.addSubtitle(url: p.url, lang: p.lang, title: p.title, select: p.select) }
         if want.isEmpty { mpv.selectTrack("sub", id: nil) }
     }
 
@@ -326,17 +306,12 @@ struct PlayerScreen: View {
 
     private func save() {
         guard mpv.loaded, !mpv.isLive, mpv.duration > 0 else { return }
-        let t = request.target
-        var r = ProgressRec(type: t.type, id: t.id)
-        r.name = t.item.name; r.poster = t.item.poster; r.shape = t.item.posterShape; r.back = t.item.background
-        r.addonUrl = t.addonUrl; r.pos = mpv.timePos; r.dur = mpv.duration
-        model.progress.note(r)
+        model.progress.note(PlaybackRules.record(target: request.target, pos: mpv.timePos, dur: mpv.duration))
     }
 
     private func reachedEnd() {
         guard !mpv.isLive else { return }
-        var r = ProgressRec(type: request.target.type, id: request.target.id); r.done = true
-        model.progress.note(r)
+        model.progress.note(PlaybackRules.doneRecord(target: request.target))
         if let n = next, model.prefs.autoplayNext { playNext(n) }
     }
 
@@ -348,10 +323,7 @@ struct PlayerScreen: View {
         target.id = n.id; target.episode = n
         let group = request.stream.bingeGroup, origin = request.streamAddon
         Task {
-            var found: (StreamItem, Addon)?
-            if let a = origin, let list = try? await model.stremio.loadStreams(base: a.base, type: target.type, id: n.id) {
-                if let s = list.first(where: { !group.isEmpty && $0.bingeGroup == group }) ?? list.first { found = (s, a) }
-            }
+            let found = await PlaybackRules.nextStream(origin: origin, type: target.type, id: n.id, bingeGroup: group, stremio: model.stremio)
             nextBusy = false
             if let f = found {
                 save()
@@ -425,86 +397,6 @@ struct PlayerScreen: View {
 }
 
 /// Apple-TV glass: a blurred circle with a hairline, the icon in white.
-struct GlassCircle: View {
-    let icon: String
-    let label: String
-    var size: CGFloat = 44
-    var on = false
-    let action: () -> Void
 
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: icon)
-                .font(.system(size: size * 0.4, weight: .semibold))
-                .foregroundStyle(on ? Color.black : Color.white)
-                .frame(width: size, height: size)
-                .background { if on { Circle().fill(.white) } else { Circle().fill(.ultraThinMaterial) } }
-                .overlay(Circle().strokeBorder(.white.opacity(0.16)))
-                .environment(\.colorScheme, .dark)
-                .contentShape(Circle())
-        }
-        .buttonStyle(.plain)
-        .help(label)
-        .accessibilityLabel(label)
-    }
-}
-
-struct TimePill: View {
-    let text: String
-    var live = false
-    var body: some View {
-        HStack(spacing: 6) {
-            if live { Circle().fill(Theme.danger).frame(width: 7, height: 7) }
-            Text(text).font(.system(size: 12, weight: .semibold, design: .monospaced)).foregroundStyle(.white)
-        }
-        .padding(.horizontal, 11).frame(height: 26)
-        .background(.ultraThinMaterial, in: Capsule())
-        .environment(\.colorScheme, .dark)
-    }
-}
 
 /// The thick rounded scrubber: played in the accent, buffered behind it, a knob only while held.
-struct Scrubber: View {
-    let position: Double
-    let duration: Double
-    let buffered: Double
-    let accent: Color
-    let onDrag: (Double) -> Void
-    let onCommit: (Double) -> Void
-    @State private var held = false
-    @State private var hoverX: CGFloat?
-
-    var body: some View {
-        GeometryReader { geo in
-            let w = geo.size.width
-            let frac = duration > 0 ? min(1, max(0, position / duration)) : 0
-            let buf = duration > 0 ? min(1, max(0, buffered / duration)) : 0
-            ZStack(alignment: .leading) {
-                Capsule().fill(.white.opacity(0.22))
-                Capsule().fill(.white.opacity(0.28)).frame(width: w * buf)
-                Capsule().fill(accent).frame(width: max(8, w * frac))
-                if held || hoverX != nil {
-                    Circle().fill(.white).frame(width: 16, height: 16).offset(x: w * frac - 8).shadow(color: .black.opacity(0.4), radius: 3)
-                }
-                if let x = hoverX, !held, duration > 0 {
-                    Text(Fmt.clock(Double(x / w) * duration))
-                        .font(.system(size: 11, weight: .semibold, design: .monospaced)).foregroundStyle(.white)
-                        .padding(.horizontal, 8).frame(height: 22)
-                        .background(.ultraThinMaterial, in: Capsule()).environment(\.colorScheme, .dark)
-                        .fixedSize().offset(x: min(max(0, x - 26), w - 52), y: -26)
-                }
-            }
-            .frame(height: held ? 10 : 8)
-            .frame(maxHeight: .infinity)
-            .contentShape(Rectangle())
-            .gesture(DragGesture(minimumDistance: 0)
-                .onChanged { g in held = true; onDrag(Double(min(max(0, g.location.x / w), 1)) * duration) }
-                .onEnded { g in held = false; onCommit(Double(min(max(0, g.location.x / w), 1)) * duration) })
-            .onContinuousHover { phase in
-                if case .active(let p) = phase { hoverX = p.x } else { hoverX = nil }
-            }
-            .animation(.easeOut(duration: 0.12), value: held)
-        }
-        .frame(height: 26)
-    }
-}

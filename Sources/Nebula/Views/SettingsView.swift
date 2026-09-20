@@ -1,5 +1,4 @@
 import SwiftUI
-import AppKit
 import NebulaCore
 
 struct SettingsView: View {
@@ -61,7 +60,7 @@ struct SettingsView: View {
                     Panel {
                         PanelRow(title: "Nebula for Mac", detail: model.updateTag.map { "Version \(AppInfo.version) · \($0) is out" } ?? "Version \(AppInfo.version) · up to date") {
                             Button(model.updateTag == nil ? "Releases" : "Get the update") {
-                                if let u = URL(string: AppInfo.repo + "/releases/latest") { NSWorkspace.shared.open(u) }
+                                if let u = URL(string: AppInfo.repo + "/releases/latest") { Platform.open(u) }
                             }
                             .buttonStyle(PillButtonStyle(filled: model.updateTag != nil))
                         }
@@ -155,7 +154,7 @@ struct ProfilePanel: View {
                 Text(key).font(.system(size: 18, weight: .semibold, design: .monospaced)).foregroundStyle(Theme.ink).textSelection(.enabled)
                     .padding(.horizontal, 14).padding(.vertical, 10).background(RoundedRectangle(cornerRadius: 9).fill(Theme.surface2))
                 HStack(spacing: 10) {
-                    Button("Copy") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(key, forType: .string); model.say("Copied.") }
+                    Button("Copy") { Platform.copy(key); model.say("Copied.") }
                         .buttonStyle(PillButtonStyle(filled: false))
                     Button("I’ve saved it") { recovery = nil }.buttonStyle(PillButtonStyle())
                 }

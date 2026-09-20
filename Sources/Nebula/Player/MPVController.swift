@@ -1,5 +1,5 @@
 import Foundation
-import AppKit
+import QuartzCore
 import Libmpv
 import NebulaCore
 
@@ -55,7 +55,7 @@ final class MPVController: ObservableObject {
     private let headless: Bool
     private let debug = ProcessInfo.processInfo.environment["NEBULA_MPV_DEBUG"] == "1"
 
-    static let userAgent = "NebulaPlayer/\(AppInfo.version) (Macintosh; macOS) libmpv"
+    static let userAgent = "NebulaPlayer/\(AppInfo.version) (\(Platform.userAgentSystem)) libmpv"
 
     init(headless: Bool = false, hardwareDecoding: Bool = true) {
         self.headless = headless

@@ -63,23 +63,3 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         _ = done.wait(timeout: .now() + 2.5)
     }
 }
-
-extension AppModel {
-    /// `nebula://play?mpd=<address>&t=<title>` — the hand-off link the other clients use — and
-    /// an add-on's `stremio://` install link.
-    func handle(url: URL) {
-        if url.scheme == "stremio" {
-            tab = .addons; path.removeAll()
-            Task { if let e = await installAddon(url.absoluteString) { say(e, error: true) } }
-            return
-        }
-        guard url.scheme == "nebula", let c = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return }
-        let q = Dictionary((c.queryItems ?? []).map { ($0.name, $0.value ?? "") }, uniquingKeysWith: { a, _ in a })
-        guard let address = q["mpd"] ?? q["url"], !address.isEmpty else { return }
-        let title = q["t"].flatMap { $0.isEmpty ? nil : $0 } ?? "Nebula"
-        var s = StreamItem(name: "", title: "", url: ClearKey.cleanUrl(address))
-        s.clearKeys = ClearKey.fromFragment(address)
-        let item = MetaItem(id: "", type: "link", name: title)
-        play(s, target: StreamsTarget(type: "link", id: "", item: item, addonUrl: ""), from: nil)
-    }
-}

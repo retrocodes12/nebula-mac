@@ -22,9 +22,11 @@ targets.append(
 )
 #endif
 
+// iOS is here so the phone app's Xcode project can take NebulaCore from this package; the
+// `Nebula` executable above stays macOS-only and the phone builds its own shell (iOS/project.yml).
 let package = Package(
     name: "Nebula",
-    platforms: [.macOS(.v13)],
+    platforms: [.macOS(.v13), .iOS(.v16)],
     products: products,
     dependencies: dependencies,
     targets: targets

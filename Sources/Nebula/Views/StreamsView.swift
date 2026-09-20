@@ -1,5 +1,4 @@
 import SwiftUI
-import AppKit
 import NebulaCore
 
 /// Where to watch it from: one section per add-on, each row led by its resolution plate.
@@ -149,8 +148,7 @@ struct StreamRow: View {
         .contextMenu {
             Button("Play") { action() }
             Button("Copy the stream’s address") {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(stream.url, forType: .string)
+                Platform.copy(stream.url)
             }
         }
     }
@@ -159,20 +157,20 @@ struct StreamRow: View {
 /// Badge art shared with the other Nebula clients, carried in the app's resources.
 struct BadgeImage: View {
     let file: String
-    static var cache: [String: NSImage] = [:]
+    static var cache: [String: PlatformImage] = [:]
 
     var body: some View {
         if let img = BadgeImage.load(file) {
-            Image(nsImage: img).resizable().aspectRatio(contentMode: .fit).frame(height: 18).frame(maxWidth: 64)
+            Image(platform: img).resizable().aspectRatio(contentMode: .fit).frame(height: 18).frame(maxWidth: 64)
         }
     }
 
-    static func load(_ file: String) -> NSImage? {
+    static func load(_ file: String) -> PlatformImage? {
         if let c = cache[file] { return c }
         // in the app the art sits in Contents/Resources/badges; SwiftPM's own resource bundle is
         // looked for at the .app's root, where nothing may live once the app is signed
         guard let dir = Bundle.main.resourceURL?.appendingPathComponent("badges"),
-              let img = NSImage(contentsOf: dir.appendingPathComponent(file)) else { return nil }
+              let img = Platform.image(contentsOfFile: dir.appendingPathComponent(file).path) else { return nil }
         cache[file] = img
         return img
     }

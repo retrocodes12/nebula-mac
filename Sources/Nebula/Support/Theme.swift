@@ -1,5 +1,4 @@
 import SwiftUI
-import AppKit
 
 /// Nebula's material, in Apple's idiom: flat near-black, ONE accent, hairline panels, two type
 /// registers (the system face, and its monospaced cut for eyebrows and numbers), no glow.
@@ -15,7 +14,12 @@ enum Theme {
     static let danger = Color(red: 1.0, green: 0.27, blue: 0.23)
 
     static let cardRadius: CGFloat = 10
+    /// The page gutter. A phone has 16 points of it, a window 32.
+    #if os(iOS)
+    static let pad: CGFloat = 16
+    #else
     static let pad: CGFloat = 32
+    #endif
 }
 
 extension Color {
@@ -28,8 +32,8 @@ extension Color {
 
     /// Black on a light accent (White), white on the rest.
     var readableInk: Color {
-        guard let c = NSColor(self).usingColorSpace(.sRGB) else { return .white }
-        let l = 0.2126 * c.redComponent + 0.7152 * c.greenComponent + 0.0722 * c.blueComponent
+        let c = Platform.rgb(self)
+        let l = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b
         return l > 0.7 ? .black : .white
     }
 }

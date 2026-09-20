@@ -85,10 +85,111 @@ jobs:
             dist/Nebula.dmg
             dist/Nebula-mac.zip
 
+  ios:
+    name: App (iPhone)
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+          brew install xcodegen
+      - uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/org.swift.swiftpm
+          key: spm-ios-${{ hashFiles('Package.swift', 'iOS/project.yml') }}-v1
+      - name: Generate the project
+        run: cd iOS && xcodegen generate
+      - name: Build for a phone (unsigned — whoever installs it signs it)
+        run: |
+          VERSION="$(tr -d '[:space:]' < VERSION)"
+          xcodebuild -project iOS/Nebula.xcodeproj -scheme Nebula \
+            -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' \
+            -derivedDataPath build -skipPackagePluginValidation \
+            MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="${GITHUB_RUN_NUMBER:-1}" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build | tail -40
+      - name: Wrap it as an .ipa
+        run: |
+          APP=build/Build/Products/Release-iphoneos/Nebula.app
+          test -d "$APP"
+          mkdir -p dist/Payload && cp -R "$APP" dist/Payload/
+          ( cd dist && zip -qry Nebula.ipa Payload && rm -rf Payload )
+          echo "what it links:"
+          otool -L "$APP/Nebula" | head -30
+          ls -la "$APP/Frameworks" 2>/dev/null || echo "(no embedded frameworks)"
+          du -sh dist/Nebula.ipa
+          plutil -p "$APP/Info.plist" | grep -E "CFBundleIdentifier|CFBundleShortVersionString|MinimumOSVersion"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Nebula-ios
+          path: dist/Nebula.ipa
+      # Everything below runs on the simulator. It is the only place a phone build can be RUN
+      # here, so a failure is reported and not fatal — the .ipa above is already made.
+      - name: Build for the simulator
+        continue-on-error: true
+        id: simbuild
+        run: |
+          xcodebuild -project iOS/Nebula.xcodeproj -scheme Nebula \
+            -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build-sim -skipPackagePluginValidation \
+            CODE_SIGNING_ALLOWED=NO build | tail -30
+      - name: Boot a phone
+        continue-on-error: true
+        id: boot
+        run: |
+          UDID=$(xcrun simctl list devices available -j | python3 -c "
+          import json,sys
+          d=json.load(sys.stdin)['devices']
+          for rt in sorted(d, reverse=True):
+              for dev in d[rt]:
+                  if dev.get('isAvailable') and dev['name'].startswith('iPhone'):
+                      print(dev['udid']); sys.exit(0)
+          sys.exit(1)")
+          echo "UDID=$UDID" >> $GITHUB_ENV
+          xcrun simctl boot "$UDID" || true
+          xcrun simctl bootstatus "$UDID" -b
+          xcrun simctl install "$UDID" build-sim/Build/Products/Debug-iphonesimulator/Nebula.app
+      - name: Smoke — the engine on a phone, no window
+        continue-on-error: true
+        run: |
+          run() {
+            echo "--- $1"
+            xcrun simctl launch --console-pty "$UDID" com.nebula.player.ios --args --smoke "$2" ${@:3} 2>&1 | grep -E '^\{' || echo "NO VERDICT"
+          }
+          run "a plain file over https" "https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4" --seconds 3
+          run "protected DASH, keys given" "https://storage.googleapis.com/shaka-demo-assets/angel-one-clearkey/dash.mpd" --keys abba271e8bcf552bbd2e86a434a9a5d9:69eaa802a6763af979e8d1940fb88392 --seconds 3
+          run "HLS" "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8" --seconds 3
+      - name: Screens
+        continue-on-error: true
+        run: |
+          mkdir -p shots
+          shot() {
+            xcrun simctl terminate "$UDID" com.nebula.player.ios 2>/dev/null || true
+            xcrun simctl launch "$UDID" com.nebula.player.ios --args ${@:2} >/dev/null
+            sleep "${SETTLE:-9}"
+            xcrun simctl io "$UDID" screenshot "shots/$1.png"
+          }
+          shot home --tab home --addon "https://sports.nebulapro.xyz/sports/i/free/manifest.json"
+          shot addons --tab addons
+          shot settings --tab settings
+          shot search --tab search
+          SETTLE=16 shot player --play "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8" --title "Test stream"
+          ls -la shots
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: shots-ios
+          path: shots
+          if-no-files-found: warn
+
+
   release:
     name: Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [core, mac]
+    needs: [core, mac, ios]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -98,10 +199,14 @@ jobs:
         with:
           name: Nebula-mac
           path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: Nebula-ios
+          path: dist
       - name: Cut the release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="${GITHUB_REF_NAME}"
           gh release delete "$TAG" --yes 2>/dev/null || true
-          gh release create "$TAG" dist/Nebula.dmg dist/Nebula-mac.zip --title "Nebula for Mac $TAG" --notes-file RELEASE_NOTES.md
+          gh release create "$TAG" dist/Nebula.dmg dist/Nebula-mac.zip dist/Nebula.ipa --title "Nebula for Mac and iPhone $TAG" --notes-file RELEASE_NOTES.md

@@ -6,7 +6,16 @@ import NebulaCore
 /// proves, on a build machine, that the engine links, opens the network, reads the container
 /// and — with keys — decrypts.
 enum Smoke {
+    /// The Mac's way in: set the run up and turn the main loop ourselves.
     static func run(_ args: [String]) -> Never {
+        start(args)
+        RunLoop.main.run()
+        exit(3)
+    }
+
+    /// The phone's way in: the app's own run loop is already turning, so only arm the timer.
+    /// `--smoke` there is `simctl launch --console`, which reads the same line from stdout.
+    static func start(_ args: [String]) {
         guard let address = args.first, !address.hasPrefix("--") else {
             FileHandle.standardError.write(Data("usage: Nebula --smoke <address> [--keys kid:key] [--seconds n]\n".utf8))
             exit(64)
@@ -50,7 +59,5 @@ enum Smoke {
             if waited > 90 { report("timed-out", 2) }
         }
         RunLoop.main.add(timer, forMode: .common)
-        RunLoop.main.run()
-        exit(3)
     }
 }

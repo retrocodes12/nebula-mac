@@ -113,7 +113,7 @@ final class AppModel: ObservableObject {
         prefs = Prefs(store: store)
         stremio = Stremio()
         cloud = Cloud(store: store, addons: addonStore, progress: progress, library: library,
-                      deviceName: Host.current().localizedName ?? "Mac")
+                      deviceName: Platform.deviceName)
         accentHex = prefs.accent
         addonStore.seedIfNeeded()
         addons = addonStore.all()
@@ -134,7 +134,7 @@ final class AppModel: ObservableObject {
         Task {
             await cloud.setHandlers(
                 onApplied: { [weak self] keys in Task { @MainActor in self?.syncApplied(keys) } },
-                onSignedOut: { [weak self] in Task { @MainActor in self?.say("This Mac was signed out of your profile. Nothing on it was deleted.") } },
+                onSignedOut: { [weak self] in Task { @MainActor in self?.say("This \(Platform.deviceWord) was signed out of your profile. Nothing on it was deleted.") } },
                 onProfile: { [weak self] p in Task { @MainActor in self?.profile = p } })
             await cloud.pullAll(force: true)
             _ = await cloud.refreshProfile()
@@ -313,5 +313,25 @@ final class AppModel: ObservableObject {
         let flat = t.videos.filter { $0.season != 0 }.sorted { ($0.season, $0.episode ?? 0) < ($1.season, $1.episode ?? 0) }
         guard let i = flat.firstIndex(where: { $0.id == cur.id }), i + 1 < flat.count else { return nil }
         return flat[i + 1]
+    }
+}
+
+extension AppModel {
+    /// `nebula://play?mpd=<address>&t=<title>` — the hand-off link the other clients use — and
+    /// an add-on's `stremio://` install link.
+    func handle(url: URL) {
+        if url.scheme == "stremio" {
+            tab = .addons; path.removeAll()
+            Task { if let e = await installAddon(url.absoluteString) { say(e, error: true) } }
+            return
+        }
+        guard url.scheme == "nebula", let c = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return }
+        let q = Dictionary((c.queryItems ?? []).map { ($0.name, $0.value ?? "") }, uniquingKeysWith: { a, _ in a })
+        guard let address = q["mpd"] ?? q["url"], !address.isEmpty else { return }
+        let title = q["t"].flatMap { $0.isEmpty ? nil : $0 } ?? "Nebula"
+        var s = StreamItem(name: "", title: "", url: ClearKey.cleanUrl(address))
+        s.clearKeys = ClearKey.fromFragment(address)
+        let item = MetaItem(id: "", type: "link", name: title)
+        play(s, target: StreamsTarget(type: "link", id: "", item: item, addonUrl: ""), from: nil)
     }
 }
