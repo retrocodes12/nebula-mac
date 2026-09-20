@@ -52,6 +52,9 @@ enum Audio {
 }
 
 /// Launch arguments the screenshot rig uses to land on a page without touching anything.
+/// `@MainActor` because a View gets that by inference from `body` and a bare enum does not —
+/// every call below reaches into the model, which is main-actor bound.
+@MainActor
 enum Launch {
     static func apply(to model: AppModel) {
         let a = CommandLine.arguments

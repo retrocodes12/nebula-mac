@@ -20,7 +20,10 @@ packages:
     exactVersion: 1.0.0
 
 targets:
-  Nebula:
+  # NOT "Nebula": the package next door exports an executable product by that name, and
+  # `xcodebuild -scheme Nebula` resolves to THAT — it built the Mac app, AppKit and all, against
+  # the iOS SDK. The app it produces is still Nebula.app (PRODUCT_NAME below).
+  NebulaPhone:
     type: application
     platform: iOS
     sources:

@@ -105,12 +105,13 @@ jobs:
       - name: Build for a phone (unsigned — whoever installs it signs it)
         run: |
           VERSION="$(tr -d '[:space:]' < VERSION)"
-          xcodebuild -project iOS/Nebula.xcodeproj -scheme Nebula \
+          xcodebuild -project iOS/Nebula.xcodeproj -scheme NebulaPhone \
             -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' \
             -derivedDataPath build -skipPackagePluginValidation \
             MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="${GITHUB_RUN_NUMBER:-1}" \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
-            build | tail -40
+            build > /tmp/xcb.log 2>&1 || { echo "=== errors ==="; grep -E "error:" /tmp/xcb.log | head -40; echo "=== tail ==="; tail -25 /tmp/xcb.log; exit 1; }
+          echo "built $(grep -c "error:" /tmp/xcb.log || true) errors, $(grep -c "warning:" /tmp/xcb.log || true) warnings"
       - name: Wrap it as an .ipa
         run: |
           APP=build/Build/Products/Release-iphoneos/Nebula.app
@@ -132,10 +133,10 @@ jobs:
         continue-on-error: true
         id: simbuild
         run: |
-          xcodebuild -project iOS/Nebula.xcodeproj -scheme Nebula \
+          xcodebuild -project iOS/Nebula.xcodeproj -scheme NebulaPhone \
             -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
             -derivedDataPath build-sim -skipPackagePluginValidation \
-            CODE_SIGNING_ALLOWED=NO build | tail -30
+            CODE_SIGNING_ALLOWED=NO build > /tmp/xcb-sim.log 2>&1 || { grep -E "error:" /tmp/xcb-sim.log | head -30; tail -20 /tmp/xcb-sim.log; exit 1; }
       - name: Boot a phone
         continue-on-error: true
         id: boot
