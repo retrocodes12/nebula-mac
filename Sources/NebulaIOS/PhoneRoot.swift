@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import NebulaCore
 
 /// The phone's shell. The Mac keeps a sidebar and its pages side by side; a phone puts the tabs
