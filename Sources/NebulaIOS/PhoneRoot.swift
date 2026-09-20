@@ -15,27 +15,32 @@ struct PhoneRoot: View {
         ZStack {
             Theme.bg.ignoresSafeArea()
 
-            ZStack {
-                // every tab stays alive under the others so a row keeps its place
-                ForEach(Tab.allCases) { t in
-                    tabRoot(t)
-                        .safeAreaInset(edge: .bottom) { Color.clear.frame(height: 68) }
-                        .opacity(model.tab == t && !pushed ? 1 : 0)
-                        .allowsHitTesting(model.tab == t && !pushed)
-                }
-                ForEach(Array(model.path.enumerated()), id: \.element) { i, route in
-                    page(route)
-                        .background(Theme.bg)
-                        .opacity(i == model.path.count - 1 ? 1 : 0)
-                        .allowsHitTesting(i == model.path.count - 1)
+            // Every page is pinned to an EXACT screen-sized frame. A ZStack otherwise takes the
+            // width of its widest child and centres the rest inside it, and these pages were
+            // written for a window: one wide row in any of the five tabs — they are all alive at
+            // once so a row keeps its place — stretched the whole stack and clipped every page,
+            // the tab bar and the player (an overlay inherits the size) on both edges. An exact
+            // frame reports its own size upwards, so no child can widen the stack any more.
+            GeometryReader { geo in
+                ZStack(alignment: .topLeading) {
+                    ForEach(Tab.allCases) { t in
+                        tabRoot(t)
+                            .safeAreaInset(edge: .bottom) { Color.clear.frame(height: 68) }
+                            .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
+                            .clipped()
+                            .opacity(model.tab == t && !pushed ? 1 : 0)
+                            .allowsHitTesting(model.tab == t && !pushed)
+                    }
+                    ForEach(Array(model.path.enumerated()), id: \.element) { i, route in
+                        page(route)
+                            .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
+                            .clipped()
+                            .background(Theme.bg)
+                            .opacity(i == model.path.count - 1 ? 1 : 0)
+                            .allowsHitTesting(i == model.path.count - 1)
+                    }
                 }
             }
-            // A ZStack takes the width of its widest child, and a horizontal card row's ideal
-            // width is the whole row — so without this every page was laid out about three
-            // screens wide and centred, clipped on both sides. The Mac's window does the same
-            // thing inside an HStack that already fills.
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .clipped()
 
             if !pushed {
                 VStack { Spacer(); TabPill() }
