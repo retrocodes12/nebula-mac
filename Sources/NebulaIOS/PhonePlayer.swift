@@ -74,6 +74,9 @@ struct PhonePlayer: View {
         .onChange(of: mpv.timePos) { t in tick(t) }
         .onChange(of: mpv.ended) { e in if e { reachedEnd() } }
         .onChange(of: mpv.loaded) { l in if l { loadedNow() } }
+        // the hide timer stands down while a sheet is up, so closing one has to re-arm it or the
+        // chrome sits there for good
+        .onChange(of: sheet) { s in if s == nil { wake() } }
     }
 
     // MARK: picture gestures
@@ -358,6 +361,8 @@ struct PhonePlayer: View {
     private func wake() {
         if !chromeVisible { withAnimation(.easeOut(duration: 0.2)) { chromeVisible = true } }
         hideTask?.cancel()
+        // the screenshot rig needs the controls to stay up; nothing else sets this
+        if ProcessInfo.processInfo.environment["NEBULA_KEEP_CHROME"] == "1" { return }
         hideTask = Task {
             try? await Task.sleep(nanoseconds: 3_000_000_000)
             if Task.isCancelled || mpv.paused || sheet != nil || mpv.failure != nil { return }

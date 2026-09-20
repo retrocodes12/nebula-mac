@@ -30,6 +30,12 @@ struct PhoneRoot: View {
                         .allowsHitTesting(i == model.path.count - 1)
                 }
             }
+            // A ZStack takes the width of its widest child, and a horizontal card row's ideal
+            // width is the whole row — so without this every page was laid out about three
+            // screens wide and centred, clipped on both sides. The Mac's window does the same
+            // thing inside an HStack that already fills.
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .clipped()
 
             if !pushed {
                 VStack { Spacer(); TabPill() }
