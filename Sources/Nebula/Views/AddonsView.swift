@@ -14,7 +14,7 @@ struct AddonsView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Add-ons").font(.system(size: 30, weight: .bold)).foregroundStyle(Theme.ink)
                     Text("Add-ons bring the catalogs, the details, the streams and the subtitles. Nebula asks them in the order below.")
-                        .font(.system(size: 13)).foregroundStyle(Theme.label2).frame(maxWidth: Theme.cap(560), alignment: .leading)
+                        .font(.system(size: 13)).foregroundStyle(Theme.label2).fixedSize(horizontal: false, vertical: true).frame(maxWidth: Theme.cap(560), alignment: .leading)
                 }
                 .padding(.top, 56)
 

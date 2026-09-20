@@ -38,7 +38,7 @@ struct DetailView: View {
                     if let d = meta?.description ?? item.description {
                         VStack(alignment: .leading, spacing: 6) {
                             Text(d).font(.system(size: 14.5)).foregroundStyle(Theme.ink.opacity(0.86)).lineSpacing(3)
-                                .lineLimit(expanded ? nil : 4).frame(maxWidth: Theme.cap(720), alignment: .leading)
+                                .lineLimit(expanded ? nil : 4).fixedSize(horizontal: false, vertical: true).frame(maxWidth: Theme.cap(720), alignment: .leading)
                             if d.count > 320 {
                                 Button(expanded ? "Less" : "More") { expanded.toggle() }.buttonStyle(.plain)
                                     .font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.label2)
