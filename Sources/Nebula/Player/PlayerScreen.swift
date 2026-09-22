@@ -12,8 +12,7 @@ struct PlayerScreen: View {
     @State private var menu: PlayerMenu?
     @State private var scrubbing: Double?
     @State private var keyMonitor: Any?
-    @State private var addonSubs: [SubTrack] = []
-    @State private var subsAdded = false
+    @State private var captions = PlaybackRules.CaptionGate()
     @State private var nextOffered = false
     @State private var nextBusy = false
     @State private var lastSaved: Double = -100
@@ -167,7 +166,7 @@ struct PlayerScreen: View {
                         }
                     }
                     .frame(maxHeight: 280)
-                    if list.isEmpty { menuNote(subsAdded ? "No subtitles were found for this." : "Looking for subtitles…") }
+                    if list.isEmpty { menuNote(captions.settled ? "No subtitles were found for this." : "Looking for subtitles…") }
                 case .speed:
                     menuTitle("Speed")
                     ForEach([0.5, 0.75, 1.0, 1.25, 1.5, 2.0], id: \.self) { s in
@@ -273,29 +272,22 @@ struct PlayerScreen: View {
         }
         Task {
             let t = request.target
-            addonSubs = await model.addonSubtitles(type: t.type, id: t.id)
-            attachSubs()
+            let subs = await model.addonSubtitles(type: t.type, id: t.id)
+            if captions.addonsAnswered(subs) { attachSubs() }
         }
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { ev in handleKey(ev) ? nil : ev }
         wake()
     }
 
     private func loadedNow() {
-        attachSubs()
+        if captions.fileLoaded() { attachSubs() }
         let want = model.prefs.audioLang
         if !want.isEmpty, let t = mpv.tracks.first(where: { $0.type == "audio" && $0.lang == want }), !t.selected { mpv.selectTrack("audio", id: t.id) }
     }
 
-    /// Add-on captions go in once the file is open; the viewer's language is selected, the rest wait in the menu.
+    /// Called once, when the gate opens: the file is open and the add-ons have answered.
     private func attachSubs() {
-        guard mpv.loaded, !subsAdded else { return }
-        let want = model.prefs.subLang
-        let plan = PlaybackRules.subtitlePlan(stream: request.stream, addon: addonSubs, want: want)
-        // nothing external to add: the file's own tracks are left exactly as the engine chose them
-        if plan.isEmpty { subsAdded = true; return }
-        subsAdded = true
-        for p in plan { mpv.addSubtitle(url: p.url, lang: p.lang, title: p.title, select: p.select) }
-        if want.isEmpty { mpv.selectTrack("sub", id: nil) }
+        PlaybackRules.attachCaptions(captions, stream: request.stream, want: model.prefs.subLang, to: mpv)
     }
 
     private func tick(_ t: Double) {

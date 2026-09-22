@@ -136,9 +136,11 @@ final class MPVController: ObservableObject {
         setProperty(type == "audio" ? "aid" : type == "video" ? "vid" : "sid", id.map(String.init) ?? "no")
     }
 
-    /// A caption file from an add-on. Loaded without selecting unless asked.
+    /// A caption file from an add-on. Loaded without selecting unless asked. Asynchronous: each
+    /// one is a download, and the synchronous call held the calling (main) thread until it was
+    /// done — seconds of a frozen window with a few dozen languages.
     func addSubtitle(url: String, lang: String, title: String, select: Bool) {
-        command("sub-add", [url, select ? "select" : "auto", title, lang])
+        commandAsync("sub-add", [url, select ? "select" : "auto", title, lang])
     }
 
     func setSubDelay(_ secs: Double) { setDouble("sub-delay", secs) }
@@ -196,6 +198,16 @@ final class MPVController: ObservableObject {
         cargs.append(nil)
         defer { for p in cargs { if let p = p { free(UnsafeMutablePointer(mutating: p)) } } }
         check(mpv_command(h, &cargs))
+    }
+
+    /// Queue a command and return at once; the reply arrives as an event nobody needs. mpv
+    /// parses (copies) the arguments before this returns, so they can be freed here.
+    private func commandAsync(_ name: String, _ args: [String]) {
+        guard let h = mpv else { return }
+        var cargs: [UnsafePointer<CChar>?] = ([name] + args).map { UnsafePointer(strdup($0)) }
+        cargs.append(nil)
+        defer { for p in cargs { if let p = p { free(UnsafeMutablePointer(mutating: p)) } } }
+        check(mpv_command_async(h, 0, &cargs))
     }
 
     private func readTracks() -> [MediaTrack] {

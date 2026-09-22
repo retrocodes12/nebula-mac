@@ -14,8 +14,7 @@ struct PhonePlayer: View {
     @State private var hideTask: Task<Void, Never>?
     @State private var sheet: PlayerSheet?
     @State private var scrubbing: Double?
-    @State private var addonSubs: [SubTrack] = []
-    @State private var subsAdded = false
+    @State private var captions = PlaybackRules.CaptionGate()
     @State private var nextOffered = false
     @State private var nextBusy = false
     @State private var lastSaved: Double = -100
@@ -64,7 +63,7 @@ struct PhonePlayer: View {
         .statusBarHidden(true)
         .persistentSystemOverlays(.hidden)
         .sheet(item: $sheet) { s in
-            PlayerSheetView(kind: s, mpv: mpv, subsAdded: subsAdded, infoRows: infoRows, prefs: model.prefs)
+            PlayerSheetView(kind: s, mpv: mpv, subsAdded: captions.settled, infoRows: infoRows, prefs: model.prefs)
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
                 .preferredColorScheme(.dark)
@@ -284,28 +283,23 @@ struct PhonePlayer: View {
         }
         Task {
             let t = request.target
-            addonSubs = await model.addonSubtitles(type: t.type, id: t.id)
-            attachSubs()
+            let subs = await model.addonSubtitles(type: t.type, id: t.id)
+            if captions.addonsAnswered(subs) { attachSubs() }
         }
         wake()
     }
 
     private func loadedNow() {
-        attachSubs()
+        if captions.fileLoaded() { attachSubs() }
         let want = model.prefs.audioLang
         if !want.isEmpty, let t = mpv.tracks.first(where: { $0.type == "audio" && $0.lang == want }), !t.selected {
             mpv.selectTrack("audio", id: t.id)
         }
     }
 
+    /// Called once, when the gate opens: the file is open and the add-ons have answered.
     private func attachSubs() {
-        guard mpv.loaded, !subsAdded else { return }
-        let want = model.prefs.subLang
-        let plan = PlaybackRules.subtitlePlan(stream: request.stream, addon: addonSubs, want: want)
-        if plan.isEmpty { subsAdded = true; return }
-        subsAdded = true
-        for p in plan { mpv.addSubtitle(url: p.url, lang: p.lang, title: p.title, select: p.select) }
-        if want.isEmpty { mpv.selectTrack("sub", id: nil) }
+        PlaybackRules.attachCaptions(captions, stream: request.stream, want: model.prefs.subLang, to: mpv)
     }
 
     private func tick(_ t: Double) {

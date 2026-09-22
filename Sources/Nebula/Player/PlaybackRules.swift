@@ -30,17 +30,33 @@ enum PlaybackRules {
         return (address, keys)
     }
 
+    /// How many captions go in: the viewer's own language gets room to choose, every other
+    /// language a couple, and the whole list stays short. Each one is a download the engine
+    /// makes, and an add-on can offer a hundred.
+    static let subsWanted = 12, subsPerOther = 2, subsTotal = 30
+
     /// The captions to attach, in order. The viewer's language is selected and the rest wait in
-    /// the menu; a language that offers dozens of the same track is capped at twelve.
+    /// the menu. The viewer's language is counted first, so the total cap never squeezes it out.
     static func subtitlePlan(stream: StreamItem, addon: [SubTrack], want: String) -> [SubPick] {
+        let all = stream.subtitles + addon
+        func wanted(_ s: SubTrack) -> Bool { !want.isEmpty && s.lang == want }
+        var room: [String: Int] = [:]
+        var keep = Set<Int>()
+        let byPriority = all.indices.sorted { a, b in (wanted(all[a]) ? 0 : 1, a) < (wanted(all[b]) ? 0 : 1, b) }
+        for i in byPriority where keep.count < subsTotal {
+            let s = all[i], n = room[s.lang] ?? 0
+            if n >= (wanted(s) ? subsWanted : subsPerOther) { continue }
+            room[s.lang] = n + 1
+            keep.insert(i)
+        }
         var perLang: [String: Int] = [:]
         var picked = false
         var out: [SubPick] = []
-        for s in stream.subtitles + addon {
+        for i in all.indices where keep.contains(i) {
+            let s = all[i]
             let n = (perLang[s.lang] ?? 0) + 1
             perLang[s.lang] = n
-            if n > 12 { continue }
-            let pick = !picked && !want.isEmpty && s.lang == want
+            let pick = !picked && wanted(s)
             if pick { picked = true }
             let name = Lang.name(s.lang)
             out.append(SubPick(url: s.url, lang: s.lang,
@@ -48,6 +64,38 @@ enum PlaybackRules {
                                select: pick))
         }
         return out
+    }
+
+    /// When the captions go in. Two things have to have happened — the file is open, and the
+    /// subtitle add-ons have answered — and they land in either order. Attaching at the first
+    /// of the two dropped every add-on caption whenever the file opened before they answered.
+    struct CaptionGate {
+        private(set) var fileOpen = false
+        /// nil while the add-ons are still being asked.
+        private(set) var addonSubs: [SubTrack]?
+        /// Everything that was going to be attached has been.
+        private(set) var settled = false
+
+        /// The file is open. True when the captions should go in now.
+        mutating func fileLoaded() -> Bool { fileOpen = true; return take() }
+
+        /// The add-ons answered (or the wait for them ran out). True when the captions should go in now.
+        mutating func addonsAnswered(_ subs: [SubTrack]) -> Bool { addonSubs = subs; return take() }
+
+        private mutating func take() -> Bool {
+            guard fileOpen, addonSubs != nil, !settled else { return false }
+            settled = true
+            return true
+        }
+    }
+
+    /// Put the plan into the engine. With nothing external to add, the file's own tracks are
+    /// left exactly as the engine chose them.
+    static func attachCaptions(_ gate: CaptionGate, stream: StreamItem, want: String, to mpv: MPVController) {
+        let plan = subtitlePlan(stream: stream, addon: gate.addonSubs ?? [], want: want)
+        if plan.isEmpty { return }
+        for p in plan { mpv.addSubtitle(url: p.url, lang: p.lang, title: p.title, select: p.select) }
+        if want.isEmpty { mpv.selectTrack("sub", id: nil) }
     }
 
     /// The resume point, carrying what a Continue watching card needs to draw itself.

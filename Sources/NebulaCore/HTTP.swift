@@ -25,15 +25,40 @@ public struct URLSessionTransport: Transport {
     }
 
     public func send(_ request: URLRequest) async throws -> (Data, Int) {
-        // a continuation rather than `data(for:)`: corelibs Foundation grew the async call late
-        try await withCheckedThrowingContinuation { cont in
-            let task = session.dataTask(with: request) { data, resp, err in
-                if let err = err { cont.resume(throwing: err); return }
-                let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
-                cont.resume(returning: (data ?? Data(), code))
+        // a continuation rather than `data(for:)`: corelibs Foundation grew the async call late.
+        // Cancelling the caller cancels the request — without that a capped wait (subtitles,
+        // a dead add-on) still sat out the full timeout before it could return.
+        let handle = TaskHandle()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { cont in
+                let task = session.dataTask(with: request) { data, resp, err in
+                    if let err = err { cont.resume(throwing: err); return }
+                    let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+                    cont.resume(returning: (data ?? Data(), code))
+                }
+                handle.set(task)
+                task.resume()
             }
-            task.resume()
+        } onCancel: {
+            handle.cancel()
         }
+    }
+}
+
+/// The request in flight, for a cancellation that can arrive before it exists.
+final class TaskHandle: @unchecked Sendable {
+    private let lock = NSLock()
+    private var task: URLSessionTask?
+    private var cancelled = false
+
+    func set(_ t: URLSessionTask) {
+        lock.lock(); task = t; let c = cancelled; lock.unlock()
+        if c { t.cancel() }
+    }
+
+    func cancel() {
+        lock.lock(); cancelled = true; let t = task; lock.unlock()
+        t?.cancel()
     }
 }
 

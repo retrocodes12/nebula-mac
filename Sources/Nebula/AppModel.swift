@@ -290,13 +290,35 @@ final class AppModel: ObservableObject {
         return askers.count
     }
 
+    /// Every subtitle add-on at once, and for no longer than eight seconds: the player attaches
+    /// captions once the file is open AND this has answered, so one slow add-on must not hold
+    /// the others back. Whatever arrived by then is what goes in, in the add-ons' order.
     func addonSubtitles(type: String, id: String) async -> [SubTrack] {
-        var out: [SubTrack] = []
-        for a in activeAddons {
-            guard let m = await manifest(for: a), m.canSubs(type, id) else { continue }
-            if let subs = try? await stremio.loadSubtitles(base: a.base, type: type, id: id) { out.append(contentsOf: subs) }
+        let list = activeAddons
+        let stremio = stremio
+        let wait: UInt64 = 8_000_000_000
+        return await withTaskGroup(of: (Int, [SubTrack])?.self) { group in
+            for (i, a) in list.enumerated() {
+                group.addTask {
+                    guard let m = await self.manifest(for: a), m.canSubs(type, id),
+                          let subs = try? await stremio.loadSubtitles(base: a.base, type: type, id: id) else { return (i, []) }
+                    return (i, subs)
+                }
+            }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: wait)
+                return nil
+            }
+            var got = [[SubTrack]](repeating: [], count: list.count)
+            var left = list.count
+            while left > 0, let next = await group.next() {
+                guard let answer = next else { break }        // the wait ran out
+                got[answer.0] = answer.1
+                left -= 1
+            }
+            group.cancelAll()                                 // the requests still out are dropped
+            return got.flatMap { $0 }
         }
-        return out
     }
 
     // MARK: play
