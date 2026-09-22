@@ -62,11 +62,15 @@ struct AddonsView: View {
                 Text(URL(string: a.base)?.host ?? a.base).font(.system(size: 11.5, design: .monospaced)).foregroundStyle(Theme.label3).lineLimit(1)
             }
             Spacer()
-            HStack(spacing: Self.iconGap) {
+            #if os(iOS)
+            rowMenu(a, i)
+            #else
+            HStack(spacing: 2) {
                 iconButton("chevron.up", "Move up", disabled: i == 0) { move(i, -1) }
                 iconButton("chevron.down", "Move down", disabled: i == model.addons.count - 1) { move(i, 1) }
                 iconButton("trash", "Remove", disabled: false) { removing = a }
             }
+            #endif
             Toggle("", isOn: Binding(get: { a.enabled }, set: { on in
                 var next = model.addons; next[i].enabled = on; model.saveAddons(next)
             }))
@@ -79,16 +83,27 @@ struct AddonsView: View {
         Button(action: action) {
             Image(systemName: icon).font(.system(size: 12, weight: .semibold)).foregroundStyle(disabled ? Theme.label3.opacity(0.4) : Theme.label2)
                 .frame(width: 28, height: 28).contentShape(Rectangle())
-                .touchArea()
         }
         .buttonStyle(.plain).disabled(disabled).help(label)
     }
 
-    // a phone's 44-point targets already sit edge to edge
     #if os(iOS)
-    private static let iconGap: CGFloat = 0
-    #else
-    private static let iconGap: CGFloat = 2
+    /// Three 44-point buttons and a switch leave a phone's row no room for the add-on's name
+    /// (it broke mid-word), so moving and removing sit behind one 44-point button — the way an
+    /// iOS list keeps a row's secondary actions.
+    private func rowMenu(_ a: Addon, _ i: Int) -> some View {
+        Menu {
+            Button { move(i, -1) } label: { Label("Move up", systemImage: "chevron.up") }
+                .disabled(i == 0)
+            Button { move(i, 1) } label: { Label("Move down", systemImage: "chevron.down") }
+                .disabled(i == model.addons.count - 1)
+            Button(role: .destructive) { removing = a } label: { Label("Remove", systemImage: "trash") }
+        } label: {
+            Image(systemName: "ellipsis").font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.label2)
+                .frame(width: 44, height: 44).contentShape(Rectangle())
+        }
+        .accessibilityLabel("Move or remove \(a.name)")
+    }
     #endif
 
     private func move(_ i: Int, _ d: Int) {
