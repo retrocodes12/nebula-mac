@@ -13,6 +13,9 @@ struct PlayerScreen: View {
     @State private var scrubbing: Double?
     @State private var keyMonitor: Any?
     @State private var captions = PlaybackRules.CaptionGate()
+    /// What the engine was handed, so Try again can hand it the same.
+    @State private var resolved: String?
+    @State private var resolvedKeys: [String: String] = [:]
     @State private var nextOffered = false
     @State private var nextBusy = false
     @State private var lastSaved: Double = -100
@@ -87,6 +90,7 @@ struct PlayerScreen: View {
                     .opacity(mpv.isLive ? 0.3 : 1)
             }
             .opacity(mpv.failure == nil ? 1 : 0)
+            .allowsHitTesting(mpv.failure == nil)          // drawn over the failure card's buttons
 
             Spacer()
 
@@ -226,7 +230,10 @@ struct PlayerScreen: View {
         VStack(spacing: 14) {
             Image(systemName: "exclamationmark.triangle").font(.system(size: 26, weight: .light)).foregroundStyle(.white.opacity(0.8))
             Text(text).font(.system(size: 15, weight: .medium)).foregroundStyle(.white).multilineTextAlignment(.center).frame(maxWidth: 420)
-            Button("Try another stream") { close() }.buttonStyle(PillButtonStyle())
+            HStack(spacing: 10) {
+                if resolved != nil { Button("Try again") { retry() }.buttonStyle(PillButtonStyle(filled: false)) }
+                Button("Try another stream") { close() }.buttonStyle(PillButtonStyle())
+            }
         }
         .padding(28)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20))
@@ -268,6 +275,7 @@ struct PlayerScreen: View {
         Task {
             let got = await PlaybackRules.source(for: s, maxHeight: model.prefs.maxHeight, stremio: model.stremio)
             protected = !got.keys.isEmpty
+            resolved = got.address; resolvedKeys = got.keys
             mpv.load(url: got.address, startAt: request.startAt, keys: got.keys, headers: s.headers)
         }
         Task {
@@ -303,6 +311,12 @@ struct PlayerScreen: View {
 
     private func reachedEnd() {
         guard !mpv.isLive else { return }
+        guard PlaybackRules.reachedTheEnd(pos: mpv.timePos, dur: mpv.duration) else {
+            // the connection went, not the film: keep the place and say so
+            save()
+            mpv.failure = PlaybackRules.cutShort
+            return
+        }
         model.progress.note(PlaybackRules.doneRecord(target: request.target))
         if let n = next, model.prefs.autoplayNext { playNext(n) }
     }
@@ -325,6 +339,15 @@ struct PlayerScreen: View {
                 model.path.append(.streams(target))
             }
         }
+    }
+
+    /// The same stream again, from where it stopped (a live one from its edge).
+    private func retry() {
+        guard let address = resolved else { return }
+        let at = mpv.isLive ? 0 : max(0, mpv.timePos - 2)
+        captions.reopened()
+        mpv.load(url: address, startAt: at, keys: resolvedKeys, headers: request.stream.headers)
+        wake()
     }
 
     private func finish() {

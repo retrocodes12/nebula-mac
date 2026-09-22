@@ -82,6 +82,10 @@ enum PlaybackRules {
         /// The add-ons answered (or the wait for them ran out). True when the captions should go in now.
         mutating func addonsAnswered(_ subs: [SubTrack]) -> Bool { addonSubs = subs; return take() }
 
+        /// The same stream was loaded again (Try again): the engine dropped the captions it
+        /// had, so they go in again once the new file is open.
+        mutating func reopened() { fileOpen = false; settled = false }
+
         private mutating func take() -> Bool {
             guard fileOpen, addonSubs != nil, !settled else { return false }
             settled = true
@@ -97,6 +101,15 @@ enum PlaybackRules {
         for p in plan { mpv.addSubtitle(url: p.url, lang: p.lang, title: p.title, select: p.select) }
         if want.isEmpty { mpv.selectTrack("sub", id: nil) }
     }
+
+    /// Whether the engine's end is the film's end. A stream that dies part-way — a dropped
+    /// connection reads to the engine as the end of the file — must not be ticked off as
+    /// watched, and must not roll on into the next episode.
+    static func reachedTheEnd(pos: Double, dur: Double) -> Bool {
+        dur > 0 && pos >= dur - ProgressStore.endGap
+    }
+
+    static let cutShort = "The stream stopped before the end. Try again, or pick another stream."
 
     /// The resume point, carrying what a Continue watching card needs to draw itself.
     static func record(target: StreamsTarget, pos: Double, dur: Double) -> ProgressRec {
