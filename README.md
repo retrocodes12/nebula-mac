@@ -16,7 +16,7 @@ The other Nebula apps: [web, webOS TV](https://github.com/retrocodes12/nebula-pl
 
 ## Install on a Mac
 
-Download `Nebula.dmg` from [Releases](https://github.com/retrocodes12/nebula-mac/releases/latest), drag Nebula to Applications. macOS 13 or later, Apple silicon or Intel. The app is not notarised: the first time, right-click it and choose **Open**.
+Download `Nebula.dmg` from [Releases](https://github.com/retrocodes12/nebula-mac/releases/latest), drag Nebula to Applications. macOS 13 or later, Apple silicon or Intel. The app is not notarised, so the first time macOS refuses to open it: go to **System Settings › Privacy & Security**, find the line about Nebula near the bottom and choose **Open Anyway**, then confirm. (macOS 15 removed the old right-click › Open way round; on macOS 13 and 14 it still works.)
 
 ## Install on an iPhone
 

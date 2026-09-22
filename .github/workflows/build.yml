@@ -236,6 +236,11 @@ jobs:
         with:
           name: Nebula-ios
           path: dist
+      - name: The tag names the version being built
+        run: |
+          # the apps read their version from VERSION; a tag that disagrees would publish a
+          # release whose files call themselves something else
+          test "$GITHUB_REF_NAME" = "v$(tr -d '[:space:]' < VERSION)" || { echo "tag $GITHUB_REF_NAME does not match VERSION $(cat VERSION)"; exit 1; }
       - name: Cut the release
         env:
           GH_TOKEN: ${{ github.token }}
