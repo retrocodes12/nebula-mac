@@ -233,19 +233,21 @@ public actor Cloud {
     func docFor(_ key: String) -> String? {
         switch key {
         case "addons":
-            var s = addons.syncDoc()
-            var at = s.obj("at") ?? [:]
-            var stamped = false
-            var list: JSONObject = [:]
-            let all = addons.all()
-            for a in all {
-                // an add-on with no stamp can never be adopted by a newest-wins merge — stamp it now
-                if at.int64(a.manifestUrl) == 0 { at[a.manifestUrl] = nowMs(); stamped = true }
-                list[a.manifestUrl] = ["name": a.name, "base": a.base, "logo": a.logo ?? "", "at": at.int64(a.manifestUrl)] as JSONObject
+            return addons.locked { () -> String in
+                var s = addons.syncDoc()
+                var at = s.obj("at") ?? [:]
+                var stamped = false
+                var list: JSONObject = [:]
+                let all = addons.all()
+                for a in all {
+                    // an add-on with no stamp can never be adopted by a newest-wins merge — stamp it now
+                    if at.int64(a.manifestUrl) == 0 { at[a.manifestUrl] = nowMs(); stamped = true }
+                    list[a.manifestUrl] = ["name": a.name, "base": a.base, "logo": a.logo ?? "", "at": at.int64(a.manifestUrl)] as JSONObject
+                }
+                if stamped { s["at"] = at; store.setObject("addons_sync", s) }
+                // the list is keyed by address and carries no order of its own — rank travels beside it
+                return JSON.text(["list": list, "removed": s.obj("removed") ?? [:], "order": all.map(\.manifestUrl), "orderAt": s.int64("orderAt")] as JSONObject)
             }
-            if stamped { s["at"] = at; store.setObject("addons_sync", s) }
-            // the list is keyed by address and carries no order of its own — rank travels beside it
-            return JSON.text(["list": list, "removed": s.obj("removed") ?? [:], "order": all.map(\.manifestUrl), "orderAt": s.int64("orderAt")] as JSONObject)
         case "progress": return JSON.text(progress.wireDoc())
         case "library": return JSON.text(library.doc())
         default: return nil
@@ -253,6 +255,10 @@ public actor Cloud {
     }
 
     private func mergeAddons(_ remote: JSONObject) -> (Bool, Bool) {
+        addons.locked { mergeAddonsLocked(remote) }
+    }
+
+    private func mergeAddonsLocked(_ remote: JSONObject) -> (Bool, Bool) {
         var s = addons.syncDoc()
         var at = s.obj("at") ?? [:], removed = s.obj("removed") ?? [:]
         var arr = addons.all()
@@ -300,38 +306,42 @@ public actor Cloud {
         return (changed, localNewer)
     }
 
+    /// Merged inside the store's own write step, so a resume point the player writes while
+    /// the merge runs is not overwritten by the merge's older copy.
     private func mergeProgress(_ remote: JSONObject) -> (Bool, Bool) {
-        var local = progress.all()
         var changed = false, localNewer = false
-        for (k, v) in remote {
-            guard let r = v as? JSONObject, let rec = ProgressRec(wire: r) else { continue }
-            if let l = local[k], l.at >= rec.at { continue }
-            local[k] = rec
-            changed = true
+        progress.mutate(notify: false) { local in
+            for (k, v) in remote {
+                guard let r = v as? JSONObject, let rec = ProgressRec(wire: r) else { continue }
+                if let l = local[k], l.at >= rec.at { continue }
+                local[k] = rec
+                changed = true
+            }
+            for (k, l) in local {
+                let rAt = (remote[k] as? JSONObject)?.int64("at")
+                if rAt == nil || l.at > rAt! { localNewer = true }
+            }
+            return changed
         }
-        for (k, l) in local {
-            let rAt = (remote[k] as? JSONObject)?.int64("at")
-            if rAt == nil || l.at > rAt! { localNewer = true }
-        }
-        if changed { progress.replaceAll(local) }
         return (changed, localNewer)
     }
 
     private func mergeLibrary(_ remote: JSONObject) -> (Bool, Bool) {
-        var local = library.doc()
         var changed = false, localNewer = false
-        for (k, v) in remote {
-            guard let r = v as? JSONObject else { continue }
-            if let l = local.obj(k), l.int64("at") >= r.int64("at") { continue }
-            local[k] = r
-            changed = true
+        library.mutate(notify: false) { local in
+            for (k, v) in remote {
+                guard let r = v as? JSONObject else { continue }
+                if let l = local.obj(k), l.int64("at") >= r.int64("at") { continue }
+                local[k] = r
+                changed = true
+            }
+            for (k, v) in local {
+                guard let l = v as? JSONObject else { continue }
+                let rAt = (remote[k] as? JSONObject)?.int64("at")
+                if rAt == nil || l.int64("at") > rAt! { localNewer = true }
+            }
+            return changed
         }
-        for (k, v) in local {
-            guard let l = v as? JSONObject else { continue }
-            let rAt = (remote[k] as? JSONObject)?.int64("at")
-            if rAt == nil || l.int64("at") > rAt! { localNewer = true }
-        }
-        if changed { library.replaceAll(local) }
         return (changed, localNewer)
     }
 

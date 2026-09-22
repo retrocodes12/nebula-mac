@@ -8,8 +8,18 @@ public final class AddonStore: @unchecked Sendable {
 
     let store: Store
     public var onChange: (() -> Void)?
+    /// The list and its sync stamps are two documents changed together, by the Add-ons page on
+    /// the main thread and by a sync merge on the cloud's; one lock keeps each change whole.
+    /// Recursive, because a locked step calls `all()` and `syncDoc()`.
+    private let lock = NSRecursiveLock()
 
     public init(store: Store) { self.store = store }
+
+    /// Run `body` with the add-on documents to itself.
+    public func locked<T>(_ body: () throws -> T) rethrows -> T {
+        lock.lock(); defer { lock.unlock() }
+        return try body()
+    }
 
     public func all() -> [Addon] {
         let doc = store.object("addons")
@@ -32,17 +42,19 @@ public final class AddonStore: @unchecked Sendable {
 
     /// A deliberate change: stamp what was added and tombstone what was removed.
     public func save(_ next: [Addon], reordered: Bool = false) {
-        let prev = all()
-        var s = syncDoc()
-        var at = s.obj("at") ?? [:], removed = s.obj("removed") ?? [:]
-        let now = nowMs()
-        let pv = Set(prev.map(\.manifestUrl)), nx = Set(next.map(\.manifestUrl))
-        for a in next where !pv.contains(a.manifestUrl) { at[a.manifestUrl] = now; removed[a.manifestUrl] = nil }
-        for a in prev where !nx.contains(a.manifestUrl) { removed[a.manifestUrl] = now; at[a.manifestUrl] = nil }
-        s["at"] = at; s["removed"] = removed
-        if reordered { s["orderAt"] = now }
-        store.setObject("addons_sync", s)
-        saveRaw(next)
+        locked {
+            let prev = all()
+            var s = syncDoc()
+            var at = s.obj("at") ?? [:], removed = s.obj("removed") ?? [:]
+            let now = nowMs()
+            let pv = Set(prev.map(\.manifestUrl)), nx = Set(next.map(\.manifestUrl))
+            for a in next where !pv.contains(a.manifestUrl) { at[a.manifestUrl] = now; removed[a.manifestUrl] = nil }
+            for a in prev where !nx.contains(a.manifestUrl) { removed[a.manifestUrl] = now; at[a.manifestUrl] = nil }
+            s["at"] = at; s["removed"] = removed
+            if reordered { s["orderAt"] = now }
+            store.setObject("addons_sync", s)
+            saveRaw(next)
+        }
         onChange?()
     }
 
@@ -55,7 +67,9 @@ public final class AddonStore: @unchecked Sendable {
 
     /// First run: the app must open full. A seeded default is stamped at the epoch so it can
     /// never beat a real removal made on another device.
-    public func seedIfNeeded() {
+    public func seedIfNeeded() { locked { seedLocked() } }
+
+    private func seedLocked() {
         var flags = store.object("seeded")
         guard !flags.bool("v1") else { return }
         flags["v1"] = true

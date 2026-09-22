@@ -484,3 +484,32 @@ final class HostileDataTests: XCTestCase {
         XCTAssertEqual(Stremio.parseStreams(j).map(\.videoSize), [0, 0, 1_073_741_824])
     }
 }
+
+final class ConcurrentStoreTests: XCTestCase {
+    /// Playback, marks and a sync merge land on different threads at once; none may be lost.
+    func testProgressWritesFromManyThreadsAreAllKept() {
+        let p = ProgressStore(store: tempStore())
+        DispatchQueue.concurrentPerform(iterations: 64) { i in
+            if i % 2 == 0 {
+                var r = ProgressRec(type: "movie", id: "tt\(i)"); r.pos = 100; r.dur = 1000
+                p.note(r)
+            } else {
+                p.mutate(notify: false) { m in
+                    var r = ProgressRec(type: "series", id: "tt\(i):1:1"); r.pos = 50; r.dur = 500; r.at = 1
+                    m[ProgressStore.key(r.type, r.id)] = r
+                    return true
+                }
+            }
+        }
+        XCTAssertEqual(p.all().count, 64)
+        XCTAssertEqual(ProgressStore(store: p.store).all().count, 64)        // and in the stored document
+    }
+
+    func testMyListTogglesFromManyThreadsAreAllKept() {
+        let l = LibraryStore(store: tempStore())
+        DispatchQueue.concurrentPerform(iterations: 48) { i in
+            l.toggle(MetaItem(id: "tt\(i)", type: "movie", name: "Film \(i)"), addonUrl: "")
+        }
+        XCTAssertEqual(l.list().count, 48)
+    }
+}

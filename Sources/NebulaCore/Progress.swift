@@ -58,6 +58,8 @@ public final class ProgressStore: @unchecked Sendable {
 
     let store: Store
     private let lock = NSLock()
+    /// Held across a whole read-change-write (`mutate`).
+    private let writeLock = NSLock()
     private var cache: [String: ProgressRec]?
     public var onChange: (() -> Void)?
     /// Add-ons switched off in the list; their titles stay out of Continue watching.
@@ -78,7 +80,20 @@ public final class ProgressStore: @unchecked Sendable {
         return m
     }
 
-    private func persist(_ input: [String: ProgressRec], notify: Bool) {
+    /// Read, change and write back as ONE step. Playback, a mark and a sync merge can land at
+    /// the same moment on different threads; each used to read its own copy, and the last write
+    /// threw away what the others had just written. `body` says whether it changed anything;
+    /// only then is the store written and, with `notify`, the change announced (for sync).
+    public func mutate(notify: Bool = true, _ body: (inout [String: ProgressRec]) -> Bool) {
+        writeLock.lock()
+        var m = all()
+        let changed = body(&m)
+        if changed { persist(m) }
+        writeLock.unlock()
+        if changed && notify { onChange?() }
+    }
+
+    private func persist(_ input: [String: ProgressRec]) {
         var m = input
         if m.count > ProgressStore.maxRecords {
             // What dies first matters. A mark carries `at = now`, so a season ticked off by hand
@@ -100,7 +115,6 @@ public final class ProgressStore: @unchecked Sendable {
         var o: JSONObject = [:]
         for (k, r) in m { o[k] = r.wire }
         store.setObject("progress", o)
-        if notify { onChange?() }
     }
 
     public func get(_ type: String, _ id: String) -> ProgressRec? { all()[ProgressStore.key(type, id)] }
@@ -114,50 +128,49 @@ public final class ProgressStore: @unchecked Sendable {
 
     public func note(_ rec: ProgressRec) {
         if rec.id.isEmpty { return }
-        var m = all()
         let k = ProgressStore.key(rec.type, rec.id)
-        if rec.done || (rec.dur > 0 && rec.pos > rec.dur - ProgressStore.endGap) {
-            var t = ProgressRec(type: rec.type, id: rec.id); t.done = true; t.at = nowMs()
-            m[k] = t
-            persist(m, notify: true)
-            return
-        }
-        if rec.pos < ProgressStore.minPos {            // rewound to the top — forget it
-            if let cur = m[k], !cur.done, !cur.dismissed {
+        mutate { m in
+            if rec.done || (rec.dur > 0 && rec.pos > rec.dur - ProgressStore.endGap) {
+                var t = ProgressRec(type: rec.type, id: rec.id); t.done = true; t.at = nowMs()
+                m[k] = t
+                return true
+            }
+            if rec.pos < ProgressStore.minPos {            // rewound to the top — forget it
+                guard let cur = m[k], !cur.done, !cur.dismissed else { return false }
                 var t = ProgressRec(type: rec.type, id: rec.id); t.dismissed = true; t.at = nowMs()
                 m[k] = t
-                persist(m, notify: true)
+                return true
             }
-            return
+            var r = rec; r.at = nowMs()
+            m[k] = r
+            return true
         }
-        var r = rec; r.at = nowMs()
-        m[k] = r
-        persist(m, notify: true)
     }
 
     /// Tick something off by hand: the SAME `done` record that playing it to the end leaves, so
     /// the tick, the series cursor and Continue watching all agree.
     public func markWatched(_ type: String, _ id: String) {
         if id.isEmpty { return }
-        var m = all()
         let k = ProgressStore.key(type, id)
-        // `hand` means "no playback ever happened here". Ticking off the episode you are part-way
-        // through is you finishing it, not a claim about the past — stamping that `hand` would
-        // throw away the only evidence of where you are.
-        let had = m[k]
-        let real = had.map { !$0.dismissed && ($0.done || ($0.pos > 0 && $0.dur > 0)) } ?? false
-        var t = ProgressRec(type: type, id: id); t.done = true; t.hand = !real; t.at = nowMs()
-        m[k] = t
-        persist(m, notify: true)
+        mutate { m in
+            // `hand` means "no playback ever happened here". Ticking off the episode you are
+            // part-way through is you finishing it, not a claim about the past — stamping that
+            // `hand` would throw away the only evidence of where you are.
+            let real = m[k].map { !$0.dismissed && ($0.done || ($0.pos > 0 && $0.dur > 0)) } ?? false
+            var t = ProgressRec(type: type, id: id); t.done = true; t.hand = !real; t.at = nowMs()
+            m[k] = t
+            return true
+        }
     }
 
     /// Undo that, or a part-way position: the tombstone every list reads as "never started".
     public func markUnwatched(_ type: String, _ id: String) {
         if id.isEmpty { return }
-        var m = all()
-        var t = ProgressRec(type: type, id: id); t.dismissed = true; t.at = nowMs()
-        m[ProgressStore.key(type, id)] = t
-        persist(m, notify: true)
+        mutate { m in
+            var t = ProgressRec(type: type, id: id); t.dismissed = true; t.at = nowMs()
+            m[ProgressStore.key(type, id)] = t
+            return true
+        }
     }
 
     public func clear(_ type: String, _ id: String) {
@@ -165,7 +178,7 @@ public final class ProgressStore: @unchecked Sendable {
     }
 
     /// Replace the whole store after a sync merge (no re-push side effects).
-    public func replaceAll(_ m: [String: ProgressRec]) { persist(m, notify: false) }
+    public func replaceAll(_ m: [String: ProgressRec]) { mutate(notify: false) { $0 = m; return true } }
 
     public func wireDoc() -> JSONObject {
         var o: JSONObject = [:]
