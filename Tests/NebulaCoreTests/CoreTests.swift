@@ -462,3 +462,25 @@ final class CloudTests: XCTestCase {
         XCTAssertNil(a.cloud.storedProfile())
     }
 }
+
+final class HostileDataTests: XCTestCase {
+    func testNumbersThatDoNotFitDegradeToZero() {
+        let o: JSONObject = ["nan": "nan", "inf": "inf", "ninf": "-inf", "big": 1e300, "neg": -1e300,
+                             "edge": 9.3e18, "ok": 42.9, "s": "17", "none": NSNull()]
+        for k in ["nan", "inf", "ninf", "big", "neg", "edge", "none", "missing"] {
+            XCTAssertEqual(o.int(k), 0, k)
+            XCTAssertEqual(o.int64(k), 0, k)
+        }
+        XCTAssertEqual(o.int("ok"), 42)
+        XCTAssertEqual(o.int64("s"), 17)
+    }
+
+    func testAStreamRowWithAnImpossibleSizeStillParses() {
+        let j = JSON.object(#"""
+        {"streams":[{"url":"https://x.test/a.mkv","behaviorHints":{"videoSize":1e300}},
+                    {"url":"https://x.test/b.mkv","behaviorHints":{"videoSize":"nan"}},
+                    {"url":"https://x.test/c.mkv","behaviorHints":{"videoSize":1073741824}}]}
+        """#)!
+        XCTAssertEqual(Stremio.parseStreams(j).map(\.videoSize), [0, 0, 1_073_741_824])
+    }
+}

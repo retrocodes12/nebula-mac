@@ -22,6 +22,14 @@ public enum JSON {
     public static func text(_ o: Any) -> String {
         String(data: data(o), encoding: .utf8) ?? "{}"
     }
+
+    /// A double as a whole number, when it is one an Int64 can hold. `Int(Double)` traps on NaN,
+    /// on infinity and on anything past the 64-bit range — and a number in add-on data (a
+    /// "videoSize" of 1e300, a string that reads "nan") is whatever its author wrote.
+    public static func whole(_ d: Double) -> Int64? {
+        guard d.isFinite, d >= -9.223372036854775808e18, d < 9.223372036854775808e18 else { return nil }
+        return Int64(d)
+    }
 }
 
 public extension Dictionary where Key == String, Value == Any {
@@ -43,8 +51,9 @@ public extension Dictionary where Key == String, Value == Any {
         return 0
     }
 
-    func int(_ k: String) -> Int { Int(num(k)) }
-    func int64(_ k: String) -> Int64 { Int64(num(k)) }
+    /// 0 when the value is missing, not a number, not finite or out of range.
+    func int(_ k: String) -> Int { JSON.whole(num(k)).map { Int($0) } ?? 0 }
+    func int64(_ k: String) -> Int64 { JSON.whole(num(k)) ?? 0 }
 
     func optInt(_ k: String) -> Int? {
         if let n = self[k] as? NSNumber { return n.intValue }
