@@ -137,17 +137,21 @@ struct DiscoverSection: View {
         VStack(alignment: .leading, spacing: 18) {
             Eyebrow("Discover")
             if let cur = current {
-                HStack(spacing: 10) {
-                    PickMenu(label: "Type", value: typeLabel(cur.catalog.type), options: types.map { ($0, typeLabel($0)) }, current: cur.catalog.type) { t in
-                        if let first = options.first(where: { $0.catalog.type == t }) { pick(first, genre: nil) }
-                    }
-                    PickMenu(label: "Catalog", value: cur.catalog.name,
-                             options: options.filter { $0.catalog.type == cur.catalog.type }.map { (key($0), "\($0.catalog.name) — \($0.addon.name)") }, current: key(cur)) { k in
-                        if let t = options.first(where: { key($0) == k }) { pick(t, genre: nil) }
-                    }
-                    if !cur.catalog.genres.isEmpty {
-                        PickMenu(label: "Genre", value: genre ?? "All genres", options: [("", "All genres")] + cur.catalog.genres.map { ($0, $0) }, current: genre ?? "") { g in
-                            pick(cur, genre: g.isEmpty ? nil : g)
+                // scrolls sideways like every other chip row: three pills that do not shrink are
+                // ~440 points, and laid out bare they made the whole page that wide on a phone
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 10) {
+                        PickMenu(label: "Type", value: typeLabel(cur.catalog.type), options: types.map { ($0, typeLabel($0)) }, current: cur.catalog.type) { t in
+                            if let first = options.first(where: { $0.catalog.type == t }) { pick(first, genre: nil) }
+                        }
+                        PickMenu(label: "Catalog", value: cur.catalog.name,
+                                 options: options.filter { $0.catalog.type == cur.catalog.type }.map { (key($0), "\($0.catalog.name) — \($0.addon.name)") }, current: key(cur)) { k in
+                            if let t = options.first(where: { key($0) == k }) { pick(t, genre: nil) }
+                        }
+                        if !cur.catalog.genres.isEmpty {
+                            PickMenu(label: "Genre", value: genre ?? "All genres", options: [("", "All genres")] + cur.catalog.genres.map { ($0, $0) }, current: genre ?? "") { g in
+                                pick(cur, genre: g.isEmpty ? nil : g)
+                            }
                         }
                     }
                 }
