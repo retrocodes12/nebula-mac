@@ -20,6 +20,8 @@ struct PlayerScreen: View {
     @State private var nextBusy = false
     @State private var lastSaved: Double = -100
     @State private var cursorHidden = false
+    /// Held while a picture is moving, so the display does not dim and sleep under a film.
+    @State private var awake: NSObjectProtocol?
 
     enum PlayerMenu: String { case audio, subtitles, speed, info }
 
@@ -59,6 +61,19 @@ struct PlayerScreen: View {
         .onChange(of: mpv.ended) { e in if e { reachedEnd() } }
         .onChange(of: mpv.loaded) { l in if l { loadedNow() } }
         .onChange(of: mpv.volume) { v in model.prefs.volume = v }
+        .onChange(of: playing) { keepDisplayAwake($0) }
+    }
+
+    /// Playing, not paused, not at the end, not failed.
+    private var playing: Bool { mpv.loaded && !mpv.paused && !mpv.ended && mpv.failure == nil }
+
+    private func keepDisplayAwake(_ on: Bool) {
+        if on, awake == nil {
+            awake = ProcessInfo.processInfo.beginActivity(options: [.idleDisplaySleepDisabled, .userInitiated], reason: "Playing a video")
+        } else if !on, let a = awake {
+            ProcessInfo.processInfo.endActivity(a)
+            awake = nil
+        }
     }
 
     // MARK: chrome
@@ -352,6 +367,7 @@ struct PlayerScreen: View {
 
     private func finish() {
         save()
+        keepDisplayAwake(false)
         hideTask?.cancel()
         if let k = keyMonitor { NSEvent.removeMonitor(k); keyMonitor = nil }
         if cursorHidden { NSCursor.unhide(); cursorHidden = false }
