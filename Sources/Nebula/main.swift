@@ -24,8 +24,13 @@ struct NebulaApp: App {
                 .environmentObject(model)
                 .frame(minWidth: 1040, minHeight: 640)
                 .onOpenURL { model.handle(url: $0) }
+                // a nebula:// link goes to the window that is already open. Without this a
+                // WindowGroup makes a NEW window for every link, and both windows draw the same
+                // model — two players, the film playing twice
+                .handlesExternalEvents(preferring: ["*"], allowing: ["*"])
                 .onAppear { delegate.model = model }
         }
+        .handlesExternalEvents(matching: ["*"])
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1360, height: 860)
         .commands {

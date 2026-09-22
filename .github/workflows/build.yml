@@ -73,6 +73,32 @@ jobs:
           for i in $(seq 1 150); do kill -0 $PID 2>/dev/null || break; sleep 2; done
           kill $PID 2>/dev/null || true
           ls -la shots
+      - name: Hand-off — a nebula:// link plays in the open window, not a second one
+        continue-on-error: true
+        run: |
+          /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$PWD/dist/Nebula.app"
+          cat > "$RUNNER_TEMP/windows.swift" <<'SWIFT'
+          import CoreGraphics
+          let pid = Int(CommandLine.arguments[1]) ?? 0
+          let all = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+          for w in all where (w[kCGWindowOwnerPID as String] as? Int) == pid && (w[kCGWindowLayer as String] as? Int) == 0 {
+              print(w[kCGWindowNumber as String] as? Int ?? 0)
+          }
+          SWIFT
+          swiftc -O -o "$RUNNER_TEMP/windows" "$RUNNER_TEMP/windows.swift"
+          mkdir -p shots "$RUNNER_TEMP/store-handoff"
+          NEBULA_STORE_DIR="$RUNNER_TEMP/store-handoff" dist/Nebula.app/Contents/MacOS/Nebula &
+          PID=$!
+          sleep 12
+          echo "windows before the link: $("$RUNNER_TEMP/windows" $PID | grep -c . || true)"
+          open "nebula://play?url=https%3A%2F%2Ftest-videos.co.uk%2Fvids%2Fbigbuckbunny%2Fmp4%2Fh264%2F360%2FBig_Buck_Bunny_360_10s_1MB.mp4&t=Hand-off"
+          sleep 10
+          IDS=$("$RUNNER_TEMP/windows" $PID)
+          COUNT=$(echo "$IDS" | grep -c . || true)
+          echo "windows after the link: $COUNT"
+          for w in $IDS; do screencapture -x -o -l "$w" "shots/13-handoff-$w-screen.png" || true; done
+          kill $PID 2>/dev/null || true
+          test "$COUNT" = 1
       - uses: actions/upload-artifact@v4
         with:
           name: shots
