@@ -173,11 +173,19 @@ struct EmptyState: View {
     let icon: String
     let title: String
     let detail: String
+    /// One way out of it, when there is one (Try again).
+    var actionTitle: String? = nil
+    var action: (() -> Void)? = nil
+
     var body: some View {
         VStack(spacing: 10) {
             Image(systemName: icon).font(.system(size: 30, weight: .light)).foregroundStyle(Theme.label3)
             Text(title).font(.system(size: 17, weight: .semibold)).foregroundStyle(Theme.ink)
-            Text(detail).font(.system(size: 13)).foregroundStyle(Theme.label2).multilineTextAlignment(.center).frame(maxWidth: 380)
+            Text(detail).font(.system(size: 13)).foregroundStyle(Theme.label2).multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true).frame(maxWidth: 380)
+            if let t = actionTitle, let a = action {
+                Button(t, action: a).buttonStyle(PillButtonStyle(filled: false)).padding(.top, 8)
+            }
         }
         .frame(maxWidth: .infinity).padding(.vertical, 80)
     }

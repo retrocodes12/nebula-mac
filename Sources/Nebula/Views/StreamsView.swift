@@ -7,7 +7,8 @@ struct StreamsView: View {
     @State var target: StreamsTarget
     @State private var sections: [StreamSection] = []
     @State private var loading = true
-    @State private var asked = 0
+    @State private var answered = 0
+    @State private var unreachable = 0
     @State private var filter: String?
     @State private var fresh = false
 
@@ -45,9 +46,14 @@ struct StreamsView: View {
                     if loading {
                         HStack(spacing: 10) { ProgressView().controlSize(.small); Text("Asking your add-ons…").font(.system(size: 13)).foregroundStyle(Theme.label2) }
                     } else if sections.isEmpty {
-                        EmptyState(icon: "play.slash", title: "No streams for this",
-                                   detail: asked == 0 ? "None of your add-ons offers streams for this kind of title. Add one that does in Add-ons."
-                                                       : "\(asked) add-on\(asked == 1 ? "" : "s") answered, and none had a stream for it.")
+                        if unreachable > 0 {
+                            EmptyState(icon: "wifi.slash", title: "No streams for this", detail: unreachableLine,
+                                       actionTitle: "Try again", action: { model.forgetMisses(); Task { await load() } })
+                        } else {
+                            EmptyState(icon: "play.slash", title: "No streams for this",
+                                       detail: answered == 0 ? "None of your add-ons offers streams for this kind of title. Add one that does in Add-ons."
+                                                             : "\(answered) add-on\(answered == 1 ? "" : "s") answered, and none had a stream for it.")
+                        }
                     }
                 }
                 .padding(.horizontal, Theme.pad).padding(.top, 8).padding(.bottom, 50)
@@ -56,10 +62,24 @@ struct StreamsView: View {
         .background(Theme.bg)
         .overlay(alignment: .topLeading) { BackButton().padding(.leading, 22).padding(.top, 44) }
         .task {
-            await hydrate()
-            asked = await model.loadStreams(target) { s in sections.append(s) }
-            loading = false
+            // the series is looked up beside the streams, not before them
+            async let hydrated: Void = hydrate()
+            await load()
+            await hydrated
         }
+    }
+
+    private func load() async {
+        sections = []; loading = true
+        let r = await model.loadStreams(target) { s in sections.append(s) }
+        answered = r.answered; unreachable = r.unreachable
+        loading = false
+    }
+
+    private var unreachableLine: String {
+        let who = "\(unreachable) add-on\(unreachable == 1 ? "" : "s") could not be reached"
+        return answered > 0 ? "\(who), and the \(answered) that answered had no stream for it. Check the connection, or try again."
+                            : "\(who). Check the connection, or try again."
     }
 
     private var header: some View {

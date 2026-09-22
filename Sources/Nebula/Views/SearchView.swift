@@ -10,6 +10,8 @@ struct SearchView: View {
     @State private var results: [CatalogRow] = []
     @State private var searching = false
     @State private var failedAll = false
+    /// Add-ons (or their search catalogs) that did not answer this search.
+    @State private var unreachable = 0
     @State private var seq = 0
     @FocusState private var focused: Bool
 
@@ -50,9 +52,12 @@ struct SearchView: View {
                     ForEach(results) { CatalogRowResults(row: $0) }
                     if !searching && results.isEmpty {
                         if failedAll {
-                            EmptyState(icon: "wifi.slash", title: "The search did not go through", detail: "None of your add-ons answered. Check the connection and press Return to try again.")
+                            EmptyState(icon: "wifi.slash", title: "The search did not go through", detail: "None of your add-ons answered. Check the connection and try again.",
+                                       actionTitle: "Try again", action: { model.forgetMisses(); run(submitted) })
                         } else {
-                            EmptyState(icon: "magnifyingglass", title: "Nothing for “\(submitted)”", detail: "Check the spelling, or try the original title.")
+                            EmptyState(icon: "magnifyingglass", title: "Nothing for “\(submitted)”",
+                                       detail: unreachable > 0 ? "\(unreachable) of your add-ons did not answer. Check the spelling, or try again in a moment."
+                                                               : "Check the spelling, or try the original title.")
                         }
                     }
                 }
@@ -69,28 +74,32 @@ struct SearchView: View {
         model.prefs.recentSearches = [q] + model.prefs.recentSearches.filter { $0.lowercased() != q.lowercased() }
         seq += 1
         let mine = seq
-        results = []; searching = true; failedAll = false
+        results = []; searching = true; failedAll = false; unreachable = 0
         Task {
+            let list = model.activeAddons
+            let infos = await model.manifests(for: list)
             var targets: [(Addon, CatalogRef)] = []
-            for a in model.activeAddons {
-                guard let m = await model.manifest(for: a) else { continue }
-                for c in m.catalogs where c.search { targets.append((a, c)) }
+            for (a, m) in zip(list, infos) {
+                for c in m?.catalogs ?? [] where c.search { targets.append((a, c)) }
             }
+            let misses = infos.filter { $0 == nil }.count
             var rows = [CatalogRow?](repeating: nil, count: targets.count)
-            var failures = 0
+            var failures = 0, answered = 0
             let stremio = model.stremio
             await withTaskGroup(of: (Int, [MetaItem]?).self) { group in
                 for (i, t) in targets.enumerated() { group.addTask { (i, try? await stremio.loadCatalog(base: t.0.base, catalog: t.1, query: q)) } }
                 for await (i, items) in group {
                     guard mine == seq else { return }
                     guard let items = items else { failures += 1; continue }
+                    answered += 1
                     if !items.isEmpty { rows[i] = CatalogRow(addon: targets[i].0, catalog: targets[i].1, items: Array(items.prefix(40))) }
                     results = rows.compactMap { $0 }
                 }
             }
             guard mine == seq else { return }
             searching = false
-            failedAll = !targets.isEmpty && failures == targets.count
+            unreachable = misses + failures
+            failedAll = answered == 0 && unreachable > 0
         }
     }
 }
@@ -161,9 +170,9 @@ struct DiscoverSection: View {
 
     private func load() async {
         var opts: [CatalogTarget] = []
-        for a in model.activeAddons {
-            guard let m = await model.manifest(for: a) else { continue }
-            for c in m.catalogs where c.browsable { opts.append(CatalogTarget(addon: a, catalog: c)) }
+        let list = model.activeAddons
+        for (a, m) in zip(list, await model.manifests(for: list)) {
+            for c in m?.catalogs ?? [] where c.browsable { opts.append(CatalogTarget(addon: a, catalog: c)) }
         }
         options = opts
         ready = true

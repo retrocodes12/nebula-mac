@@ -67,7 +67,10 @@ struct CatalogView: View {
                     Task { await pager.more(addon: target.addon, catalog: target.catalog, genre: genre, stremio: model.stremio) }
                 }
                 if pager.loading { ProgressView().controlSize(.small).frame(maxWidth: .infinity).padding() }
-                if pager.failed { EmptyState(icon: "wifi.slash", title: "This catalog did not answer", detail: "Try again in a moment.") }
+                if pager.failed {
+                    EmptyState(icon: "wifi.slash", title: "This catalog did not answer", detail: "Check the connection, or try again in a moment.",
+                               actionTitle: "Try again", action: { Task { await pager.reset(addon: target.addon, catalog: target.catalog, genre: genre, stremio: model.stremio) } })
+                }
                 else if !pager.loading && pager.items.isEmpty { EmptyState(icon: "square.grid.2x2", title: "Nothing here.", detail: "This catalog is empty right now.") }
             }
             .padding(.horizontal, Theme.pad).padding(.bottom, 50)

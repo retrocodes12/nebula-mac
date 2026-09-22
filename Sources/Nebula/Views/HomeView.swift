@@ -35,11 +35,10 @@ struct HomeView: View {
                 if model.activeAddons.isEmpty {
                     EmptyState(icon: "puzzlepiece.extension", title: "No add-ons are switched on", detail: "Nebula shows what your add-ons offer. Add one, or switch one back on, in Add-ons.")
                 } else if model.homeFailed {
-                    VStack(spacing: 14) {
-                        EmptyState(icon: "wifi.slash", title: "Nothing answered", detail: "None of your add-ons could be reached. Check the connection and try again.")
-                        Button("Try again") { model.invalidateHome() }.buttonStyle(PillButtonStyle(filled: false)).padding(.top, -60)
-                    }
-                    .frame(maxWidth: .infinity)
+                    EmptyState(icon: "wifi.slash", title: "Nothing answered", detail: "None of your add-ons could be reached. Check the connection and try again.",
+                               actionTitle: "Try again", action: { model.retryHome() })
+                } else if !model.homeLoading && model.homeRows.isEmpty && cw.isEmpty {
+                    EmptyState(icon: "square.grid.2x2", title: "Nothing to show yet", detail: "None of the add-ons switched on has a catalog. Add one that does in Add-ons.")
                 }
                 Color.clear.frame(height: 30)
             }

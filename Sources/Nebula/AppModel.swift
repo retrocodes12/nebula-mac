@@ -100,7 +100,11 @@ final class AppModel: ObservableObject {
     private var homeSig: String?
     private var homeSeq = 0
 
-    private var manifests: [String: ManifestInfo] = [:]
+    private var manifestCache: [String: ManifestInfo] = [:]
+    /// Add-ons whose manifest did not answer, and when. For two minutes every page passes them
+    /// by instead of each waiting out the same timeout again; Try again forgets them.
+    private var manifestMisses: [String: Date] = [:]
+    private static let missFor: TimeInterval = 120
     private var toastTask: Task<Void, Never>?
 
     var accent: Color { Color(hex: accentHex) }
@@ -193,11 +197,28 @@ final class AppModel: ObservableObject {
     // MARK: add-ons
 
     func manifest(for addon: Addon) async -> ManifestInfo? {
-        if let m = manifests[addon.manifestUrl] { return m }
-        guard let m = try? await stremio.loadManifest(addon.manifestUrl) else { return nil }
-        manifests[addon.manifestUrl] = m
-        return m
+        let u = addon.manifestUrl
+        if let m = manifestCache[u] { return m }
+        if let at = manifestMisses[u], Date().timeIntervalSince(at) < AppModel.missFor { return nil }
+        let got = try? await stremio.loadManifest(u)
+        if let m = got { manifestCache[u] = m; manifestMisses[u] = nil }
+        else if !Task.isCancelled { manifestMisses[u] = Date() }    // a request we gave up on proves nothing
+        return got
     }
+
+    /// Every add-on's manifest at once, in the add-ons' order; nil where one did not answer.
+    /// One slow add-on used to hold up every page for its whole timeout, the next one after it.
+    func manifests(for list: [Addon]) async -> [ManifestInfo?] {
+        await withTaskGroup(of: (Int, ManifestInfo?).self) { group in
+            for (i, a) in list.enumerated() { group.addTask { (i, await self.manifest(for: a)) } }
+            var out = [ManifestInfo?](repeating: nil, count: list.count)
+            for await (i, m) in group { out[i] = m }
+            return out
+        }
+    }
+
+    /// The viewer pressed Try again: ask the add-ons that missed straight away.
+    func forgetMisses() { manifestMisses.removeAll() }
 
     var activeAddons: [Addon] { addons.filter(\.enabled) }
 
@@ -212,14 +233,14 @@ final class AppModel: ObservableObject {
         guard let url = Stremio.addonUrlOf(raw) else { return "Paste the add-on’s address." }
         if addons.contains(where: { $0.manifestUrl == url }) { return "That add-on is already installed." }
         guard let m = try? await stremio.loadManifest(url) else { return "That address did not answer with an add-on." }
-        manifests[url] = m
+        manifestCache[url] = m; manifestMisses[url] = nil
         saveAddons(addons + [m.addon])
         say("Added \(m.addon.name).")
         return nil
     }
 
     private func syncApplied(_ keys: Set<String>) {
-        if keys.contains("addons") { addons = addonStore.all(); manifests.removeAll(); invalidateHome() }
+        if keys.contains("addons") { addons = addonStore.all(); manifestCache.removeAll(); manifestMisses.removeAll(); invalidateHome() }
         if keys.contains("progress") { progressVersion += 1 }
         if keys.contains("library") { libraryVersion += 1 }
     }
@@ -227,6 +248,9 @@ final class AppModel: ObservableObject {
     // MARK: Home
 
     func invalidateHome() { homeSig = nil; Task { await loadHome() } }
+
+    /// Home's Try again.
+    func retryHome() { forgetMisses(); invalidateHome() }
 
     func loadHome() async {
         let active = activeAddons
@@ -236,13 +260,16 @@ final class AppModel: ObservableObject {
         homeSeq += 1
         let seq = homeSeq
         homeLoading = true; homeFailed = false
-        var wanted: [(Addon, CatalogRef)] = []
-        for a in active {
-            guard let m = await manifest(for: a) else { continue }
-            for c in m.catalogs where c.browsable { wanted.append((a, c)) }
-        }
+        let infos = await manifests(for: active)
         guard seq == homeSeq else { return }
+        var wanted: [(Addon, CatalogRef)] = []
+        for (a, m) in zip(active, infos) {
+            for c in m?.catalogs ?? [] where c.browsable { wanted.append((a, c)) }
+        }
+        let misses = infos.filter { $0 == nil }.count
         let targets = Array(wanted.prefix(24))
+        // nothing to ask — every catalog add-on switched off, or none answered: the old rows go
+        if targets.isEmpty { homeRows = [] }
         var rows = [CatalogRow?](repeating: nil, count: targets.count)
         let stremio = stremio
         await withTaskGroup(of: (Int, [MetaItem]).self) { group in
@@ -257,7 +284,8 @@ final class AppModel: ObservableObject {
         }
         guard seq == homeSeq else { return }
         homeLoading = false
-        homeFailed = homeRows.isEmpty && !targets.isEmpty
+        // an offline launch fails every manifest: that is a failure to say, not a blank page
+        homeFailed = homeRows.isEmpty && (!targets.isEmpty || misses > 0)
         if homeFailed { homeSig = nil }
     }
 
@@ -267,12 +295,16 @@ final class AppModel: ObservableObject {
     func loadMeta(_ item: MetaItem, addonUrl: String) async -> (FullMeta, Addon)? {
         let active = activeAddons
         let origin = active.first { $0.manifestUrl == addonUrl }
-        let order = (origin.map { [$0] } ?? []) + active.filter { $0.manifestUrl != addonUrl }
-        for a in order {
-            if a.manifestUrl != addonUrl {
-                guard let m = await manifest(for: a), m.canMeta(item.type, item.id) else { continue }
-            }
-            if let meta = try? await stremio.loadFullMeta(base: a.base, type: item.type, id: item.id), !meta.name.isEmpty || !meta.videos.isEmpty {
+        let others = active.filter { $0.manifestUrl != addonUrl }
+        // the others' manifests come in while the title's own add-on is asked
+        async let infos = manifests(for: others)
+        func usable(_ m: FullMeta?) -> Bool { m.map { !$0.name.isEmpty || !$0.videos.isEmpty } ?? false }
+        if let o = origin, let meta = try? await stremio.loadFullMeta(base: o.base, type: item.type, id: item.id), usable(meta) {
+            return (meta, o)
+        }
+        for (a, m) in zip(others, await infos) {
+            guard let m = m, m.canMeta(item.type, item.id) else { continue }
+            if let meta = try? await stremio.loadFullMeta(base: a.base, type: item.type, id: item.id), usable(meta) {
                 return (meta, a)
             }
         }
@@ -281,22 +313,27 @@ final class AppModel: ObservableObject {
 
     // MARK: streams
 
-    func loadStreams(_ t: StreamsTarget, onSection: @escaping (StreamSection) -> Void) async -> Int {
-        var askers: [Addon] = []
-        for a in activeAddons {
-            guard let m = await manifest(for: a), m.stream.has else { continue }
-            if a.manifestUrl == t.addonUrl || m.canStream(t.type, t.id) { askers.append(a) }
-        }
+    /// Each add-on on its own track — its manifest, then its streams — so a section shows the
+    /// moment its add-on answers and a dead one holds nobody up. Returns how many were asked and
+    /// answered, and how many could not be reached (a manifest or a stream request that failed).
+    func loadStreams(_ t: StreamsTarget, onSection: @escaping (StreamSection) -> Void) async -> (answered: Int, unreachable: Int) {
         let stremio = stremio
-        var failures = 0
-        await withTaskGroup(of: (Addon, [StreamItem]?).self) { group in
-            for a in askers { group.addTask { (a, try? await stremio.loadStreams(base: a.base, type: t.type, id: t.id)) } }
-            for await (a, streams) in group {
-                guard let s = streams else { failures += 1; continue }
+        var answered = 0, unreachable = 0
+        await withTaskGroup(of: (Addon, Bool, [StreamItem]?).self) { group in
+            for a in activeAddons {
+                group.addTask {
+                    guard let m = await self.manifest(for: a) else { return (a, false, nil) }
+                    guard m.stream.has, a.manifestUrl == t.addonUrl || m.canStream(t.type, t.id) else { return (a, false, []) }
+                    return (a, true, try? await stremio.loadStreams(base: a.base, type: t.type, id: t.id))
+                }
+            }
+            for await (a, asked, streams) in group {
+                guard let s = streams else { unreachable += 1; continue }
+                if asked { answered += 1 }
                 if !s.isEmpty { onSection(StreamSection(addon: a, streams: s)) }
             }
         }
-        return askers.count
+        return (answered, unreachable)
     }
 
     /// Every subtitle add-on at once, and for no longer than eight seconds: the player attaches
