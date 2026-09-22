@@ -21,6 +21,9 @@ final class ManifestProxy: @unchecked Sendable {
     private let queue = DispatchQueue(label: "nebula.manifest-proxy")
     private var listener: NWListener?
     private var port: UInt16 = 0
+    /// The port last handed out, kept when its listener dies: binding it again keeps the
+    /// addresses already given to the engine working.
+    private var lastPort: UInt16 = 0
     private var entries: [String: Entry] = [:]
     private let maxAge: TimeInterval = 2.5
     private let session: URLSession = {
@@ -33,9 +36,9 @@ final class ManifestProxy: @unchecked Sendable {
     /// Fetch and prepare a manifest, and return the loopback address to play plus the ORIGINAL
     /// text (the licence address is read from it). nil = play the source directly.
     func open(_ source: String, headers: [String: String], maxHeight: Int) async -> (address: String, xml: String)? {
-        guard await ensureListening(), let (_, xml) = await fetch(source, headers: headers) else { return nil }
+        guard await ensureListening(), let (xml, base) = await fetch(source, headers: headers) else { return nil }
         let token = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
-        let body = Data(DashManifest.prepare(xml, manifestUrl: source, maxHeight: maxHeight).utf8)
+        let body = Data(DashManifest.prepare(xml, manifestUrl: base, maxHeight: maxHeight).utf8)
         queue.sync {
             // one film at a time: what came before is never asked for again
             entries = [token: Entry(source: source, headers: headers, maxHeight: maxHeight, body: body, fetchedAt: Date())]
@@ -43,37 +46,52 @@ final class ManifestProxy: @unchecked Sendable {
         return ("http://127.0.0.1:\(port)/m/\(token).mpd", xml)
     }
 
-    private func fetch(_ source: String, headers: [String: String]) async -> (Data, String)? {
+    /// The manifest's text and the address it finally came from. A source that redirects
+    /// serves relative segment paths that belong to the address it landed on, not to the one
+    /// asked for — resolving them against the first sent the engine to the wrong host.
+    private func fetch(_ source: String, headers: [String: String]) async -> (xml: String, base: String)? {
         guard let url = URL(string: source) else { return nil }
         var r = Net.addonRequest(url)
         r.setValue(MPVController.userAgent, forHTTPHeaderField: "User-Agent")
         for (k, v) in headers { r.setValue(v, forHTTPHeaderField: k) }
-        guard let (data, resp) = try? await session.data(for: r), (resp as? HTTPURLResponse).map({ (200...299).contains($0.statusCode) }) ?? false,
+        guard let (data, resp) = try? await session.data(for: r), let http = resp as? HTTPURLResponse, (200...299).contains(http.statusCode),
               let xml = String(data: data, encoding: .utf8), xml.range(of: "<MPD", options: .caseInsensitive) != nil else { return nil }
-        return (data, xml)
+        return (xml, http.url?.absoluteString ?? source)
     }
 
     private func ensureListening() async -> Bool {
-        if queue.sync(execute: { listener != nil && port != 0 }) { return true }
-        return await withCheckedContinuation { cont in
+        let (up, again) = queue.sync { (alive(), lastPort) }
+        if up { return true }
+        if again != 0, let p = NWEndpoint.Port(rawValue: again), await bind(p) { return true }
+        return await bind(.any)
+    }
+
+    private func bind(_ on: NWEndpoint.Port) async -> Bool {
+        await withCheckedContinuation { cont in
             do {
                 let params = NWParameters.tcp
                 params.requiredInterfaceType = .loopback
                 params.allowLocalEndpointReuse = true
-                let l = try NWListener(using: params, on: .any)
+                let l = try NWListener(using: params, on: on)
                 final class Once: @unchecked Sendable { var done = false }     // the continuation resumes once
                 let once = Once()
                 l.stateUpdateHandler = { [weak self] state in
-                    guard let self = self, !once.done else { return }
+                    guard let self = self else { return }
                     switch state {
                     case .ready:
+                        guard !once.done else { return }
                         once.done = true
                         self.port = l.port?.rawValue ?? 0
+                        self.lastPort = self.port
                         self.listener = l
                         cont.resume(returning: self.port != 0)
                     case .failed, .cancelled:
-                        once.done = true
-                        cont.resume(returning: false)
+                        // A listener can die long after it was ready — a phone reclaims a
+                        // suspended app's sockets. Handing out its port then gave the engine a
+                        // dead address for good; drop it, and the next open binds again.
+                        if self.listener === l { self.listener = nil; self.port = 0 }
+                        if case .failed = state { l.cancel() }
+                        if !once.done { once.done = true; cont.resume(returning: false) }
                     default: break
                     }
                 }
@@ -83,6 +101,23 @@ final class ManifestProxy: @unchecked Sendable {
                 cont.resume(returning: false)
             }
         }
+    }
+
+    /// Whether the listener in hand can still take a connection. One that is not ready any
+    /// more is let go here. Runs on `queue`.
+    private func alive() -> Bool {
+        guard let l = listener, port != 0 else { return false }
+        if case .ready = l.state { return true }
+        l.cancel()
+        listener = nil; port = 0
+        return false
+    }
+
+    /// Coming back to the front (the phone): bind again now, on the old port when it can be
+    /// had, rather than when the engine next asks a dead address for a manifest.
+    func revive() {
+        guard queue.sync(execute: { lastPort != 0 }) else { return }
+        Task { _ = await ensureListening() }
     }
 
     private func serve(_ c: NWConnection) {
@@ -98,8 +133,8 @@ final class ManifestProxy: @unchecked Sendable {
             Task {
                 // a live manifest moves on: ask the source again, and fall back to the copy in hand
                 var body = e.body
-                if let (_, xml) = await self.fetch(e.source, headers: e.headers) {
-                    let fresh = Data(DashManifest.prepare(xml, manifestUrl: e.source, maxHeight: e.maxHeight).utf8)
+                if let (xml, base) = await self.fetch(e.source, headers: e.headers) {
+                    let fresh = Data(DashManifest.prepare(xml, manifestUrl: base, maxHeight: e.maxHeight).utf8)
                     body = fresh
                     self.queue.async { if self.entries[token] != nil { self.entries[token]?.body = fresh; self.entries[token]?.fetchedAt = Date() } }
                 }

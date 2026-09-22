@@ -88,6 +88,7 @@ struct PhonePlayer: View {
             mpv.setVideo(false)
         }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
+            ManifestProxy.shared.revive()
             mpv.setVideo(true)
         }
         .onReceive(NotificationCenter.default.publisher(for: AVAudioSession.interruptionNotification).receive(on: DispatchQueue.main)) { n in
