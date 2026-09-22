@@ -96,6 +96,21 @@ enum Launch {
         if let raw = value("--addon") {
             Task { if let e = await model.installAddon(raw) { model.say(e, error: true) } }
         }
+        // onto a title page or a streams page: the first film or series Home shows, once it has any
+        if let page = value("--page") {
+            Task {
+                for _ in 0..<160 where model.homeRows.isEmpty { try? await Task.sleep(nanoseconds: 250_000_000) }
+                let all = model.homeRows.flatMap { r in r.items.map { ($0, r.addon) } }
+                let film = all.first { $0.0.type == "movie" }, series = all.first { $0.0.type == "series" }
+                switch page {
+                case "film": if let f = film { model.open(f.0, addonUrl: f.1.manifestUrl) }
+                case "series": if let s = series { model.open(s.0, addonUrl: s.1.manifestUrl) }
+                case "streams":
+                    if let f = film { model.push(.streams(StreamsTarget(type: f.0.type, id: f.0.id, item: f.0, addonUrl: f.1.manifestUrl))) }
+                default: break
+                }
+            }
+        }
         if let address = value("--play") {
             var c = URLComponents()
             c.scheme = "nebula"

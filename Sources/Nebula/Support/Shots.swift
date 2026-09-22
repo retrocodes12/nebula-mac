@@ -73,6 +73,11 @@ enum Shots {
                 m.player = nil
                 await pause(1)
             }
+            // the narrowest window the app allows: the hero's art must not widen the page
+            window.setFrame(NSRect(x: 40, y: 40, width: 1040, height: 760), display: true)
+            m.select(.home)
+            await settle(atLeast: 2) { true }
+            await snap(window, dir, "14-home-narrow")
             log("done")
             exit(0)
         }
