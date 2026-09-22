@@ -139,6 +139,15 @@ final class AppModel: ObservableObject {
             await cloud.pullAll(force: true)
             _ = await cloud.refreshProfile()
         }
+        // a pull at launch only meant a Mac left open all day never saw the TV's progress; the
+        // Mac also pulls on coming to the front and the phone on becoming active (both throttled
+        // to one pull per 45 s inside Cloud, like the web player)
+        Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 300_000_000_000)
+                await cloud.pullAll()
+            }
+        }
         Task { await checkForUpdate() }
     }
 

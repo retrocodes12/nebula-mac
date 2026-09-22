@@ -55,6 +55,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
+    /// Back at the front: what changed on the TV or the phone meanwhile comes in (Cloud keeps
+    /// this to one pull per 45 s).
+    func applicationDidBecomeActive(_ notification: Notification) {
+        guard let cloud = model?.cloud else { return }
+        Task { await cloud.pullAll() }
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         // the last few seconds of progress should reach the profile before the process goes
         guard let cloud = model?.cloud else { return }

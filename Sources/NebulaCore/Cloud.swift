@@ -39,6 +39,10 @@ public actor Cloud {
     let deviceName: String
 
     private var pushTasks: [String: Task<Void, Never>] = [:]
+    /// How many times each key has changed. A push only clears the dirty mark when nothing
+    /// changed while it was on the wire — otherwise that change was never sent and a flush at
+    /// quit would find nothing to send.
+    private var changes: [String: Int] = [:]
     private var lastPullAt: Int64 = 0
     private var applying = false
 
@@ -139,6 +143,7 @@ public actor Cloud {
     /// Mark a key changed and schedule a debounced push. Safe to call constantly.
     public func noteChanged(_ key: String) {
         guard linked, !applying else { return }
+        changes[key, default: 0] += 1
         var d = store.object("cloud_dirty"); d[key] = 1
         store.setObject("cloud_dirty", d)
         pushTasks[key]?.cancel()
@@ -160,10 +165,13 @@ public actor Cloud {
     }
 
     private func pushKey(_ key: String) async {
+        let seen = changes[key, default: 0]
         guard linked, let v = docFor(key) else { return }
         guard let r = try? await api("PUT", "/v1/kv/\(key)", ["v": v]) else { return }
         var revs = store.object("cloud_revs"); revs[key] = r.int("rev")
         store.setObject("cloud_revs", revs)
+        // the actor let other calls in during the PUT: a change made then is still unsent
+        guard changes[key, default: 0] == seen else { return }
         var d = store.object("cloud_dirty"); d[key] = nil
         store.setObject("cloud_dirty", d)
     }

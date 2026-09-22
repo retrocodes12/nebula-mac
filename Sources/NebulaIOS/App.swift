@@ -20,9 +20,33 @@ struct NebulaPhoneApp: App {
                 .task { Launch.apply(to: model) }
         }
         .onChange(of: phase) { p in
-            // iOS can suspend us without warning, so the last seconds of progress go up as soon
-            // as the app leaves the screen rather than when it closes
-            if p != .active { Task { await model.cloud.flush() } }
+            switch p {
+            case .active:
+                // what changed on the TV or the Mac while the phone was away (throttled in Cloud)
+                Task { await model.cloud.pullAll() }
+            case .background:
+                Sync.flushInBackground(model.cloud)
+            default:
+                // iOS can suspend us without warning, so the last seconds of progress go up as
+                // soon as the app leaves the screen rather than when it closes
+                Task { await model.cloud.flush() }
+            }
+        }
+    }
+}
+
+enum Sync {
+    /// A backgrounded app is suspended within moments; the last push runs as an expiring
+    /// activity, which holds the process up until it is done (or iOS says time is up).
+    static func flushInBackground(_ cloud: Cloud) {
+        ProcessInfo.processInfo.performExpiringActivity(withReason: "Send the last progress to the profile") { expired in
+            guard !expired else { return }
+            let done = DispatchSemaphore(value: 0)
+            Task.detached {
+                await cloud.flush()
+                done.signal()
+            }
+            _ = done.wait(timeout: .now() + 20)
         }
     }
 }
