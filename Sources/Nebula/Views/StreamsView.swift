@@ -137,7 +137,9 @@ struct StreamRow: View {
         let raw = stream.name + "\n" + stream.title + "\n" + stream.fileName
         let plate = StreamBadges.plate(raw)
         let match = StreamBadges.match(raw)
-        let facts = StreamBadges.facts(videoSize: stream.videoSize, text: stream.title, fired: [])
+        // the rules that drew a badge also take their words out of the description, so a row
+        // does not say "HDR · Atmos" beside the HDR and Atmos badges
+        let facts = StreamBadges.facts(videoSize: stream.videoSize, text: stream.title, fired: match.fired)
         let name = StreamBadges.cleanName(stream.name, addonName: addonName)
         let desc = StreamBadges.cleanDesc(facts.desc)
         Button(action: action) {

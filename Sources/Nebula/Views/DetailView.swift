@@ -223,7 +223,7 @@ struct EpisodeRow: View {
                     HStack(spacing: 8) {
                         Text(ep.episode.map { "E\($0)" } ?? "•").font(.system(size: 11, weight: .semibold, design: .monospaced)).foregroundStyle(upNext ? model.accent : Theme.label3)
                         if upNext { Text("UP NEXT").font(.system(size: 10, weight: .semibold, design: .monospaced)).tracking(1).foregroundStyle(model.accent) }
-                        if done { Image(systemName: "checkmark.circle.fill").font(.system(size: 12)).foregroundStyle(Theme.ok) }
+                        if done { Image(systemName: "checkmark.circle.fill").font(.system(size: 12)).foregroundStyle(model.accent) }
                         Spacer()
                         if let d = airDate { Text(d).font(.system(size: 11, design: .monospaced)).foregroundStyle(Theme.label3) }
                     }

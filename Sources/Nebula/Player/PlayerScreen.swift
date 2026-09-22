@@ -150,7 +150,7 @@ struct PlayerScreen: View {
     private var scrubber: some View {
         HStack(spacing: 12) {
             if mpv.isLive {
-                TimePill(text: "LIVE", live: true)
+                TimePill(text: "LIVE", live: true, accent: model.accent)
                 Capsule().fill(.white.opacity(0.25)).frame(height: 6)
             } else {
                 TimePill(text: Fmt.clock(scrubbing ?? mpv.timePos))

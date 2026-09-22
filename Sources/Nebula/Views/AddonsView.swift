@@ -21,6 +21,7 @@ struct AddonsView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 10) {
                         TextField("Paste an add-on’s address or install link", text: $address)
+                            .entry(.address)
                             .textFieldStyle(.plain).font(.system(size: 14)).foregroundStyle(Theme.ink)
                             .padding(.horizontal, 14).frame(height: 40)
                             .background(RoundedRectangle(cornerRadius: 10).fill(Theme.surface))
@@ -61,7 +62,7 @@ struct AddonsView: View {
                 Text(URL(string: a.base)?.host ?? a.base).font(.system(size: 11.5, design: .monospaced)).foregroundStyle(Theme.label3).lineLimit(1)
             }
             Spacer()
-            HStack(spacing: 2) {
+            HStack(spacing: Self.iconGap) {
                 iconButton("chevron.up", "Move up", disabled: i == 0) { move(i, -1) }
                 iconButton("chevron.down", "Move down", disabled: i == model.addons.count - 1) { move(i, 1) }
                 iconButton("trash", "Remove", disabled: false) { removing = a }
@@ -78,9 +79,17 @@ struct AddonsView: View {
         Button(action: action) {
             Image(systemName: icon).font(.system(size: 12, weight: .semibold)).foregroundStyle(disabled ? Theme.label3.opacity(0.4) : Theme.label2)
                 .frame(width: 28, height: 28).contentShape(Rectangle())
+                .touchArea()
         }
         .buttonStyle(.plain).disabled(disabled).help(label)
     }
+
+    // a phone's 44-point targets already sit edge to edge
+    #if os(iOS)
+    private static let iconGap: CGFloat = 0
+    #else
+    private static let iconGap: CGFloat = 2
+    #endif
 
     private func move(_ i: Int, _ d: Int) {
         var next = model.addons

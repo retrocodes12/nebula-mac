@@ -45,7 +45,7 @@ struct PosterCard: View {
                     .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius).strokeBorder(hover ? Color.white : Theme.line, lineWidth: hover ? 2 : 1))
                     .overlay(alignment: .topTrailing) {
                         if model.progress.get(item.type, item.id)?.done == true {
-                            Image(systemName: "checkmark.circle.fill").font(.system(size: 16)).foregroundStyle(.white, Theme.ok).padding(7)
+                            Image(systemName: "checkmark.circle.fill").font(.system(size: 16)).foregroundStyle(model.accent.readableInk, model.accent).padding(7)
                         }
                     }
                 VStack(alignment: .leading, spacing: 2) {
@@ -212,6 +212,7 @@ struct BackButton: View {
                 .overlay(Circle().strokeBorder(.white.opacity(0.14)))
                 .environment(\.colorScheme, .dark)
                 .contentShape(Circle())
+                .touchArea()
         }
         .buttonStyle(.plain)
         .keyboardShortcut("[", modifiers: .command)

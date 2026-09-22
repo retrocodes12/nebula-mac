@@ -62,7 +62,8 @@ public enum StreamBadges {
 
     public struct Match {
         public var badges: [String]
-        var fired: [NSRegularExpression]
+        /// Every rule that hit, badge shown or not — `facts` drops the words they stand for.
+        public var fired: [NSRegularExpression]
     }
 
     /// Badge file names for a row. `skipGroup` is a group shown elsewhere (the resolution plate).

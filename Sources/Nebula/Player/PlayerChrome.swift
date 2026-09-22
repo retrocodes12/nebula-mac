@@ -21,6 +21,7 @@ struct GlassCircle: View {
                 .overlay(Circle().strokeBorder(.white.opacity(0.16)))
                 .environment(\.colorScheme, .dark)
                 .contentShape(Circle())
+                .touchArea()
         }
         .buttonStyle(.plain)
         .help(label)
@@ -31,9 +32,11 @@ struct GlassCircle: View {
 struct TimePill: View {
     let text: String
     var live = false
+    /// The live dot wears the app's one accent, not an alarm red of its own.
+    var accent: Color = .white
     var body: some View {
         HStack(spacing: 6) {
-            if live { Circle().fill(Theme.danger).frame(width: 7, height: 7) }
+            if live { Circle().fill(accent).frame(width: 7, height: 7) }
             Text(text).font(.system(size: 12, weight: .semibold, design: .monospaced)).foregroundStyle(.white)
         }
         .padding(.horizontal, 11).frame(height: 26)

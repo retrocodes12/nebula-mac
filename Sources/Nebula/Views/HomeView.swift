@@ -104,9 +104,10 @@ struct Hero: View {
                         model.library.toggle(item, addonUrl: addon.manifestUrl)
                     }
                     Spacer()
-                    HStack(spacing: 6) {
+                    HStack(spacing: Hero.dotGap) {
                         ForEach(items.indices, id: \.self) { i in
                             Capsule().fill(i == index ? Color.white : Color.white.opacity(0.3)).frame(width: i == index ? 18 : 6, height: 6)
+                                .dotTarget()
                                 .onTapGesture { withAnimation(.easeInOut(duration: 0.4)) { index = i } }
                         }
                     }
@@ -126,11 +127,29 @@ struct Hero: View {
         }
     }
 
+    // On a phone each dot is a 44-point-tall target that meets its neighbours; six of them
+    // still have to share the row with Watch and +, so they are 26 to 38 points wide.
+    #if os(iOS)
+    static let dotGap: CGFloat = 0
+    #else
+    static let dotGap: CGFloat = 6
+    #endif
+
     private func facts(_ m: MetaItem) -> String {
         var p = [typeLabel(m.type) == "Films" ? "FILM" : typeLabel(m.type).uppercased()]
         if let g = m.genres.first { p.append(g.uppercased()) }
         if let y = m.releaseInfo { p.append(y) }
         if let r = m.imdbRating { p.append("★ " + r) }
         return p.joined(separator: "  ·  ")
+    }
+}
+
+private extension View {
+    @ViewBuilder func dotTarget() -> some View {
+        #if os(iOS)
+        self.padding(.horizontal, 10).frame(height: 44).contentShape(Rectangle())
+        #else
+        self
+        #endif
     }
 }

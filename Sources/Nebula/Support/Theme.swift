@@ -10,7 +10,6 @@ enum Theme {
     static let ink = Color(red: 0.96, green: 0.96, blue: 0.97)
     static let label2 = Color.white.opacity(0.64)
     static let label3 = Color.white.opacity(0.40)
-    static let ok = Color(red: 0.19, green: 0.82, blue: 0.35)
     static let danger = Color(red: 1.0, green: 0.27, blue: 0.23)
 
     static let cardRadius: CGFloat = 10
@@ -70,6 +69,37 @@ extension Color {
         return l > 0.7 ? .black : .white
     }
 }
+
+extension View {
+    /// On a phone, at least `side` points to touch (Apple's minimum is 44), whatever size the
+    /// control is drawn at. A window's pointer needs no help.
+    @ViewBuilder func touchArea(_ side: CGFloat = 44) -> some View {
+        #if os(iOS)
+        self.frame(minWidth: side, minHeight: side).contentShape(Rectangle())
+        #else
+        self
+        #endif
+    }
+
+    /// What a phone's keyboard should do in a field: no capitals and no autocorrect in a handle,
+    /// a password, an address or a code, the URL keyboard for an address, and the password
+    /// manager told which field is which.
+    @ViewBuilder func entry(_ kind: EntryKind) -> some View {
+        #if os(iOS)
+        switch kind {
+        case .handle: self.textInputAutocapitalization(.never).autocorrectionDisabled().textContentType(.username)
+        case .password: self.textInputAutocapitalization(.never).autocorrectionDisabled().textContentType(.password)
+        case .newPassword: self.textInputAutocapitalization(.never).autocorrectionDisabled().textContentType(.newPassword)
+        case .address: self.textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL).textContentType(.URL)
+        case .code: self.textInputAutocapitalization(.characters).autocorrectionDisabled()
+        }
+        #else
+        self
+        #endif
+    }
+}
+
+enum EntryKind { case handle, password, newPassword, address, code }
 
 /// The small monospaced line above a title: a kicker, a count, a label.
 struct Eyebrow: View {

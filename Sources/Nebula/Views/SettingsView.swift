@@ -136,9 +136,10 @@ struct ProfilePanel: View {
                 Text(mode == .signIn ? "Your add-ons, your place in everything and My List come with you."
                                      : "A handle and a password — no email. What is on this \(Platform.deviceWord) becomes the profile.")
                     .font(.system(size: 12.5)).foregroundStyle(Theme.label2)
-                field("@handle", text: $handle)
+                field("@handle", text: $handle).entry(.handle)
                 if mode == .create { field("Name", text: $name) }
                 SecureField("Password", text: $password)
+                    .entry(mode == .create ? .newPassword : .password)
                     .textFieldStyle(.plain).font(.system(size: 14)).padding(.horizontal, 12).frame(height: 38)
                     .background(RoundedRectangle(cornerRadius: 9).fill(Theme.surface2))
                     .onSubmit(submit)
@@ -194,6 +195,7 @@ struct ProfilePanel: View {
             PanelRow(title: "Sign in a TV", detail: tvNote ?? "Type the 6-character code the TV is showing.") {
                 HStack(spacing: 8) {
                     TextField("CODE", text: $tvCode)
+                        .entry(.code)
                         .textFieldStyle(.plain).font(.system(size: 14, weight: .semibold, design: .monospaced)).multilineTextAlignment(.center)
                         .frame(width: 96, height: 34).background(RoundedRectangle(cornerRadius: 8).fill(Theme.surface2))
                         .onSubmit(approveTv)
