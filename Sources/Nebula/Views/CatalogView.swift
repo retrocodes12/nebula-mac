@@ -15,6 +15,9 @@ final class CatalogPager: ObservableObject {
 
     func reset(addon: Addon, catalog: CatalogRef, genre: String?, stremio: Stremio) async {
         seq += 1
+        // a page still out for the old pick will never clear this (it belongs to an old seq),
+        // and `more` refuses to start while it is set — without this the grid spun forever
+        loading = false
         key = addon.manifestUrl + "|" + catalog.type + "|" + catalog.id + "|" + (genre ?? "")
         items = []; seen = []; fetched = 0; done = false; failed = false
         await more(addon: addon, catalog: catalog, genre: genre, stremio: stremio)
