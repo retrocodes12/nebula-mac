@@ -340,6 +340,7 @@ final class FakeCloud: Transport, @unchecked Sendable {
     var kv: [String: (v: String, rev: Int)] = [:]
     var tokens = Set<String>()
     var log: [String] = []
+    var lastDevice: JSONObject?
 
     func send(_ request: URLRequest) async throws -> (Data, Int) { handle(request) }
 
@@ -351,6 +352,7 @@ final class FakeCloud: Transport, @unchecked Sendable {
         let body = request.httpBody.flatMap(JSON.object) ?? [:]
         func reply(_ code: Int, _ o: JSONObject) -> (Data, Int) { (JSON.data(o), code) }
         if path == "/v1/profile/signin" {
+            lastDevice = body.obj("device")
             if body.str("password") != "correct horse" { return reply(403, ["error": "wrong handle or password"]) }
             let t = "tok\(tokens.count)"; tokens.insert(t)
             return reply(200, ["gid": "g1", "token": t, "profile": ["handle": body.str("handle"), "name": "Sohil", "avatar": "#E50914"] as JSONObject])
@@ -387,6 +389,20 @@ final class CloudTests: XCTestCase {
         let a = AddonStore(store: s), p = ProgressStore(store: s), l = LibraryStore(store: s)
         return Device(store: s, addons: a, progress: p, library: l,
                       cloud: Cloud(store: s, addons: a, progress: p, library: l, transport: server, base: "https://c.test/cloud"))
+    }
+
+    func testDeviceIsFiledUnderItsOwnPlatform() async {
+        let server = FakeCloud(), s = tempStore()
+        let a = AddonStore(store: s), p = ProgressStore(store: s), l = LibraryStore(store: s)
+        let phone = Cloud(store: s, addons: a, progress: p, library: l, transport: server, base: "https://c.test/cloud",
+                          deviceName: "Sohil's iPhone", platform: "ios")
+        _ = await phone.signIn(handle: "@sohil", password: "correct horse")
+        XCTAssertEqual(server.lastDevice?.str("plat"), "ios")
+        XCTAssertEqual(server.lastDevice?.str("name"), "Sohil's iPhone")
+        // a Mac that says nothing is still a Mac
+        let server2 = FakeCloud()
+        _ = await device(server2).cloud.signIn(handle: "@sohil", password: "correct horse")
+        XCTAssertEqual(server2.lastDevice?.str("plat"), "macos")
     }
 
     func testWrongPasswordIsASentence() async {

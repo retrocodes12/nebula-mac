@@ -37,6 +37,9 @@ public actor Cloud {
     let progress: ProgressStore
     let library: LibraryStore
     let deviceName: String
+    /// What the profile's device list files this device under ("macos", "ios"). Add-on requests
+    /// keep saying macos (Net.clientName) — that is what the sports add-on recognises.
+    let platform: String
 
     private var pushTasks: [String: Task<Void, Never>] = [:]
     /// How many times each key has changed. A push only clears the dirty mark when nothing
@@ -53,9 +56,10 @@ public actor Cloud {
     public var onProfile: (@Sendable (Profile?) -> Void)?
 
     public init(store: Store, addons: AddonStore, progress: ProgressStore, library: LibraryStore,
-                transport: Transport = URLSessionTransport(), base: String = Cloud.defaultBase, deviceName: String = "Mac") {
+                transport: Transport = URLSessionTransport(), base: String = Cloud.defaultBase, deviceName: String = "Mac",
+                platform: String = "macos") {
         self.store = store; self.addons = addons; self.progress = progress; self.library = library
-        self.transport = transport; self.base = base; self.deviceName = deviceName
+        self.transport = transport; self.base = base; self.deviceName = deviceName; self.platform = platform
     }
 
     public func setHandlers(onApplied: (@Sendable (Set<String>) -> Void)?, onSignedOut: (@Sendable () -> Void)?, onProfile: (@Sendable (Profile?) -> Void)?) {
@@ -85,7 +89,7 @@ public actor Cloud {
         onProfile?(p)
     }
 
-    var deviceInfo: JSONObject { ["name": String(deviceName.prefix(24)), "plat": "macos"] }
+    var deviceInfo: JSONObject { ["name": String(deviceName.prefix(24)), "plat": platform] }
 
     // MARK: HTTP
 

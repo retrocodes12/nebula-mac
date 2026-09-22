@@ -42,7 +42,7 @@ struct SettingsView: View {
                             Toggle("", isOn: $autoplayNext).toggleStyle(.switch).labelsHidden().controlSize(.small)
                         }
                         Hairline()
-                        PanelRow(title: "Skip with the arrow keys", detail: "How far ← and → move. Hold Shift for a minute.") {
+                        PanelRow(title: skipTitle, detail: skipDetail) {
                             HStack(spacing: 6) { ForEach([5, 10, 15, 30], id: \.self) { s in Chip(text: "\(s) s", on: seekStep == s) { seekStep = s } } }
                         }
                         Hairline()
@@ -58,14 +58,16 @@ struct SettingsView: View {
 
                 section("About") {
                     Panel {
-                        PanelRow(title: "Nebula for Mac", detail: model.updateTag.map { "Version \(AppInfo.version) · \($0) is out" } ?? "Version \(AppInfo.version) · up to date") {
+                        PanelRow(title: Platform.appTitle, detail: model.updateTag.map { "Version \(AppInfo.version) · \($0) is out" } ?? "Version \(AppInfo.version) · up to date") {
                             Button(model.updateTag == nil ? "Releases" : "Get the update") {
                                 if let u = URL(string: AppInfo.repo + "/releases/latest") { Platform.open(u) }
                             }
                             .buttonStyle(PillButtonStyle(filled: model.updateTag != nil))
                         }
+                        #if os(macOS)
                         Hairline()
                         PanelRow(title: "Keyboard", detail: "Space play or pause · ← → skip · ↑ ↓ volume · F full screen · M mute · C subtitles · A audio · I info · N next episode · Esc back") { EmptyView() }
+                        #endif
                     }
                 }
             }
@@ -84,6 +86,15 @@ struct SettingsView: View {
         .onChange(of: hwdec) { model.prefs.hardwareDecoding = $0 }
         .onChange(of: maxHeight) { model.prefs.maxHeight = $0 }
     }
+
+    // the step is the arrow keys' on a Mac, the double tap's and the skip buttons' on a phone
+    #if os(macOS)
+    private let skipTitle = "Skip with the arrow keys"
+    private let skipDetail = "How far ← and → move. Hold Shift for a minute."
+    #else
+    private let skipTitle = "Skip by"
+    private let skipDetail = "How far a double tap or the skip buttons move."
+    #endif
 
     private func section<C: View>(_ title: String, @ViewBuilder content: () -> C) -> some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -123,7 +134,7 @@ struct ProfilePanel: View {
                     Chip(text: "Create a profile", on: mode == .create) { mode = .create; error = nil }
                 }
                 Text(mode == .signIn ? "Your add-ons, your place in everything and My List come with you."
-                                     : "A handle and a password — no email. What is on this Mac becomes the profile.")
+                                     : "A handle and a password — no email. What is on this \(Platform.deviceWord) becomes the profile.")
                     .font(.system(size: 12.5)).foregroundStyle(Theme.label2)
                 field("@handle", text: $handle)
                 if mode == .create { field("Name", text: $name) }
@@ -174,7 +185,7 @@ struct ProfilePanel: View {
                 }
                 Spacer()
                 Button("Sign out") {
-                    Task { await model.cloud.signOut(); devices = []; model.say("Signed out. Nothing on this Mac was deleted.") }
+                    Task { await model.cloud.signOut(); devices = []; model.say("Signed out. Nothing on this \(Platform.deviceWord) was deleted.") }
                 }
                 .buttonStyle(PillButtonStyle(filled: false))
             }
@@ -197,7 +208,7 @@ struct ProfilePanel: View {
                         HStack(spacing: 10) {
                             Image(systemName: icon(d.plat)).foregroundStyle(Theme.label2).frame(width: 20)
                             Text(d.name).font(.system(size: 13.5)).foregroundStyle(Theme.ink)
-                            if d.me { Text("THIS MAC").font(.system(size: 9.5, weight: .semibold, design: .monospaced)).tracking(1).foregroundStyle(model.accent) }
+                            if d.me { Text("THIS \(Platform.deviceWord.uppercased())").font(.system(size: 9.5, weight: .semibold, design: .monospaced)).tracking(1).foregroundStyle(model.accent) }
                             Spacer()
                             if !d.me {
                                 Button("Sign out") { Task { if let e = await model.cloud.removeDevice(d.id) { model.say(e, error: true) }; await refresh() } }
@@ -216,7 +227,7 @@ struct ProfilePanel: View {
     private func icon(_ plat: String) -> String {
         switch plat {
         case "macos", "desktop", "windows", "linux": return "desktopcomputer"
-        case "android": return "iphone"
+        case "ios", "android": return "iphone"
         case "androidtv", "webos", "tv": return "tv"
         default: return "globe"
         }

@@ -117,7 +117,7 @@ final class AppModel: ObservableObject {
         prefs = Prefs(store: store)
         stremio = Stremio()
         cloud = Cloud(store: store, addons: addonStore, progress: progress, library: library,
-                      deviceName: Platform.deviceName)
+                      deviceName: Platform.deviceName, platform: Platform.client)
         accentHex = prefs.accent
         addonStore.seedIfNeeded()
         addons = addonStore.all()

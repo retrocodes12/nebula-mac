@@ -41,12 +41,21 @@ enum Platform {
         #endif
     }
 
-    /// What the app calls this device in a sentence.
+    /// What the app calls this device in a sentence ("this Mac", "this phone").
     static var deviceWord: String {
         #if canImport(AppKit)
         return "Mac"
         #else
-        return "phone"
+        return UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "phone"
+        #endif
+    }
+
+    /// The app's name on this device, as About gives it.
+    static var appTitle: String {
+        #if canImport(AppKit)
+        return "Nebula for Mac"
+        #else
+        return "Nebula for iPhone"
         #endif
     }
 
@@ -59,7 +68,8 @@ enum Platform {
         #endif
     }
 
-    /// The client name the add-on protocol carries (`X-Nebula-Client`).
+    /// The platform the profile files this device under. Add-on requests say `macos` on both
+    /// (`Net.clientName`), because that is the name the sports add-on serves its cards to.
     static var client: String {
         #if canImport(AppKit)
         return "macos"
