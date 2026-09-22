@@ -63,6 +63,20 @@ struct PhoneRoot: View {
         .tint(model.accent)
         .preferredColorScheme(.dark)
         .task { await model.loadHome() }
+        // ONE owner for the screen lock and the sound. Each player used to set them on appear
+        // and clear them on disappear, and the old player fading out after the next episode's
+        // had appeared switched auto-lock back on in the middle of it.
+        .onChange(of: model.player != nil) { playing in
+            UIApplication.shared.isIdleTimerDisabled = playing
+            if playing { Audio.begin() }
+            else {
+                // once the engine has let go of its output, so the music is told to go on
+                Task {
+                    try? await Task.sleep(nanoseconds: 600_000_000)
+                    if model.player == nil { Audio.end() }
+                }
+            }
+        }
     }
 
     @ViewBuilder

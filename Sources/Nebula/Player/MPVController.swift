@@ -145,6 +145,11 @@ final class MPVController: ObservableObject {
 
     func setSubDelay(_ secs: Double) { setDouble("sub-delay", secs) }
 
+    /// Picture on or off, the sound untouched. A phone may not draw with the GPU while the app
+    /// is in the background, and a video output left drawing there comes back black; taking the
+    /// video track away while away and giving it back on return is the MPVKit demo's own cure.
+    func setVideo(_ on: Bool) { setProperty("vid", on ? "auto" : "no") }
+
     func stop() { command("stop", []) }
 
     /// Let go of the engine. Destroying it waits for its threads, so that happens off the main thread.

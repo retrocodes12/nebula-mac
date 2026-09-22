@@ -1,5 +1,7 @@
 import SwiftUI
 import UIKit
+import AVFoundation
+import Combine
 import NebulaCore
 
 /// The phone's player. The engine, the source resolution, the captions, the resume point and the
@@ -25,6 +27,8 @@ struct PhonePlayer: View {
     @State private var locked = false
     @State private var flash: String?
     @State private var flashTask: Task<Void, Never>?
+    /// Playing when a call (or another app's sound) took over, so play on when it hands back.
+    @State private var resumeAfterInterruption = false
 
     enum PlayerSheet: String, Identifiable { case audio, subtitles, speed, info; var id: String { rawValue } }
 
@@ -79,6 +83,49 @@ struct PhonePlayer: View {
         // the hide timer stands down while a sheet is up, so closing one has to re-arm it or the
         // chrome sits there for good
         .onChange(of: sheet) { s in if s == nil { wake() } }
+        // locked or in the background the sound goes on, the picture waits (setVideo says why)
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in
+            mpv.setVideo(false)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
+            mpv.setVideo(true)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: AVAudioSession.interruptionNotification).receive(on: DispatchQueue.main)) { n in
+            interrupted(n)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: AVAudioSession.routeChangeNotification).receive(on: DispatchQueue.main)) { n in
+            routeChanged(n)
+        }
+    }
+
+    // MARK: sound
+
+    /// A call or an alarm takes the sound: pause, and play on afterwards only if iOS says to.
+    private func interrupted(_ n: Notification) {
+        guard let raw = n.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+              let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
+        switch type {
+        case .began:
+            resumeAfterInterruption = !mpv.paused
+            mpv.setPaused(true)
+        case .ended:
+            let opts = AVAudioSession.InterruptionOptions(rawValue: n.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0)
+            if resumeAfterInterruption && opts.contains(.shouldResume) {
+                Audio.begin()
+                mpv.setPaused(false)
+            }
+            resumeAfterInterruption = false
+        @unknown default:
+            break
+        }
+    }
+
+    /// Headphones pulled out: the film stops rather than carrying on out of the speaker.
+    private func routeChanged(_ n: Notification) {
+        guard let raw = n.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
+              AVAudioSession.RouteChangeReason(rawValue: raw) == .oldDeviceUnavailable else { return }
+        mpv.setPaused(true)
+        wake()
     }
 
     // MARK: picture gestures
@@ -277,10 +324,11 @@ struct PhonePlayer: View {
         .animation(.easeOut(duration: 0.2), value: chromeShown)
     }
 
-    // MARK: life cycle — the Mac's, with the phone's idle timer added
+    // MARK: life cycle — the Mac's
 
     private func start() {
-        UIApplication.shared.isIdleTimerDisabled = true
+        // PhoneRoot owns the session and the idle timer; asking again here is harmless and
+        // makes sure the session is up before the engine opens its output
         Audio.begin()
         let s = request.stream
         Task {
@@ -366,7 +414,6 @@ struct PhonePlayer: View {
         save()
         hideTask?.cancel()
         flashTask?.cancel()
-        UIApplication.shared.isIdleTimerDisabled = false
         mpv.close()
         Task { await model.cloud.flush() }
     }

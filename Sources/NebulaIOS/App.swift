@@ -36,18 +36,25 @@ final class PhoneDelegate: NSObject, UIApplicationDelegate {
             Smoke.start(Array(CommandLine.arguments[(i + 1)...]))
             return true
         }
-        Audio.begin()
+        // no audio session here: activating one at launch stops whatever the viewer was
+        // listening to just for opening the app — it starts with playback (PhoneRoot)
         return true
     }
 }
 
 /// Sound on a phone needs asking for: without a playback session the engine's output is silenced
-/// by the ring switch and stops the moment the screen locks.
+/// by the ring switch and stops the moment the screen locks. The session is only held while
+/// something plays — it is not mixable, so holding it stops the viewer's music.
 enum Audio {
     static func begin() {
         let s = AVAudioSession.sharedInstance()
         try? s.setCategory(.playback, mode: .moviePlayback)
         try? s.setActive(true)
+    }
+
+    /// Give the sound back, and tell the app that had it (the music) that it can go on.
+    static func end() {
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 }
 
