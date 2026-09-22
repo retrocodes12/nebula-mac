@@ -134,12 +134,12 @@ struct DetailView: View {
             guard let ep = cursor?.upNext ?? flat.first ?? m.videos.first else { return }
             openEpisode(ep, m)
         } else {
-            model.path.append(.streams(StreamsTarget(type: item.type, id: item.id, item: full, addonUrl: addonUrl)))
+            model.push(.streams(StreamsTarget(type: item.type, id: item.id, item: full, addonUrl: addonUrl)))
         }
     }
 
     private func openEpisode(_ ep: Episode, _ m: FullMeta) {
-        model.path.append(.streams(StreamsTarget(type: item.type, id: ep.id, item: full, addonUrl: metaAddon?.manifestUrl ?? addonUrl, episode: ep, videos: m.videos)))
+        model.push(.streams(StreamsTarget(type: item.type, id: ep.id, item: full, addonUrl: metaAddon?.manifestUrl ?? addonUrl, episode: ep, videos: m.videos)))
     }
 
     // MARK: credits

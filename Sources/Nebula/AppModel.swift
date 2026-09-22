@@ -187,7 +187,13 @@ final class AppModel: ObservableObject {
     // MARK: navigation
 
     func open(_ item: MetaItem, addonUrl: String) {
-        path.append(.detail(item, addonUrl: addonUrl))
+        push(.detail(item, addonUrl: addonUrl))
+    }
+
+    /// Every page goes on through here. A double tap or click used to push the same page twice,
+    /// so Back seemed to do nothing; a page equal to the one on top is refused.
+    func push(_ r: Route) {
+        if path.last != r { path.append(r) }
     }
 
     func select(_ t: Tab) {

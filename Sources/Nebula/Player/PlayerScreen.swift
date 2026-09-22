@@ -351,7 +351,7 @@ struct PlayerScreen: View {
                 model.play(f.0, target: target, from: f.1, fresh: true)
             } else {
                 close()
-                model.path.append(.streams(target))
+                model.push(.streams(target))
             }
         }
     }

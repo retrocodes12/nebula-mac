@@ -115,7 +115,7 @@ struct CatalogRowView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             RowHeader(title: row.catalog.name, subline: "from \(row.addon.name) · \(typeLabel(row.catalog.type))") {
-                model.path.append(.catalog(CatalogTarget(addon: row.addon, catalog: row.catalog)))
+                model.push(.catalog(CatalogTarget(addon: row.addon, catalog: row.catalog)))
             }
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(alignment: .top, spacing: 16) {
@@ -196,7 +196,7 @@ struct ContinueCard: View {
     }
 
     private func resume() {
-        model.path.append(.streams(StreamsTarget(type: rec.type, id: rec.id, item: seriesItem, addonUrl: rec.addonUrl)))
+        model.push(.streams(StreamsTarget(type: rec.type, id: rec.id, item: seriesItem, addonUrl: rec.addonUrl)))
     }
 }
 

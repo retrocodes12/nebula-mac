@@ -34,20 +34,20 @@ enum Shots {
                 m.open(f.0, addonUrl: f.1.manifestUrl)
                 await settle(atLeast: 4) { true }
                 await snap(window, dir, "03-film")
-                m.path.append(.streams(StreamsTarget(type: f.0.type, id: f.0.id, item: f.0, addonUrl: f.1.manifestUrl)))
+                m.push(.streams(StreamsTarget(type: f.0.type, id: f.0.id, item: f.0, addonUrl: f.1.manifestUrl)))
                 await settle(atLeast: 6) { true }
                 await snap(window, dir, "04-streams")
                 m.path.removeAll()
             }
             // a row of live events, when the rig added an add-on that has them
             if let live = m.homeRows.first(where: { $0.catalog.type != "movie" && $0.catalog.type != "series" }), let ev = live.items.first {
-                m.path.append(.streams(StreamsTarget(type: ev.type, id: ev.id, item: ev, addonUrl: live.addon.manifestUrl)))
+                m.push(.streams(StreamsTarget(type: ev.type, id: ev.id, item: ev, addonUrl: live.addon.manifestUrl)))
                 await settle(atLeast: 10) { true }
                 await snap(window, dir, "05-live-streams")
                 m.path.removeAll()
             }
             if let row = m.homeRows.first {
-                m.path.append(.catalog(CatalogTarget(addon: row.addon, catalog: row.catalog)))
+                m.push(.catalog(CatalogTarget(addon: row.addon, catalog: row.catalog)))
                 await settle(atLeast: 4) { true }
                 await snap(window, dir, "06-catalog")
                 m.path.removeAll()

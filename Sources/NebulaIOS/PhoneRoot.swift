@@ -31,8 +31,11 @@ struct PhoneRoot: View {
                             .opacity(model.tab == t && !pushed ? 1 : 0)
                             .allowsHitTesting(model.tab == t && !pushed)
                     }
-                    ForEach(Array(model.path.enumerated()), id: \.element) { i, route in
+                    ForEach(Array(model.path.enumerated()), id: \.offset) { i, route in
+                        // keyed by place in the stack (the same page can sit in it twice, apart),
+                        // and by the page itself, so a new page in an old place starts fresh
                         page(route)
+                            .id(route)
                             .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
                             .clipped()
                             .background(Theme.bg)

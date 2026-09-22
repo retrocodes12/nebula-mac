@@ -16,8 +16,11 @@ struct RootView: View {
                             .opacity(model.tab == t && model.path.isEmpty ? 1 : 0)
                             .allowsHitTesting(model.tab == t && model.path.isEmpty)
                     }
-                    ForEach(Array(model.path.enumerated()), id: \.element) { i, route in
+                    ForEach(Array(model.path.enumerated()), id: \.offset) { i, route in
+                        // keyed by place in the stack (the same page can sit in it twice, apart),
+                        // and by the page itself, so a new page in an old place starts fresh
                         page(route)
+                            .id(route)
                             .background(Theme.bg)
                             .opacity(i == model.path.count - 1 ? 1 : 0)
                             .allowsHitTesting(i == model.path.count - 1)
