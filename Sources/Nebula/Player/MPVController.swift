@@ -105,7 +105,9 @@ final class MPVController: ObservableObject {
         DispatchQueue.main.async { [self] in
             loaded = false; ended = false; failure = nil; buffering = true; timePos = startAt; duration = 0; tracks = []
         }
-        lastErrorLines = []
+        // the error lines are appended on the engine's queue; clearing them from here raced it.
+        // Queued before the load, this runs before any event of the new file is handled.
+        queue.async { [weak self] in self?.lastErrorLines = [] }
         setProperty("demuxer-lavf-o", ClearKey.demuxerOptions(keys))
         var fields = ["X-Nebula-Client: \(Net.clientName)"]
         for (k, v) in headers where k.lowercased() != "user-agent" { fields.append("\(k): \(v.replacingOccurrences(of: ",", with: "\\,"))") }
@@ -324,14 +326,18 @@ final class MetalLayer: CAMetalLayer {
         set { if Int(newValue.width) > 1 && Int(newValue.height) > 1 { super.drawableSize = newValue } }
     }
 
-    // turning extended range on only takes effect from the main thread
+    // turning extended range on only takes effect from the main thread. The engine sets it
+    // from its render thread; waiting there for the main thread (main.sync) deadlocks the
+    // moment the main thread is itself waiting on the engine, so the change is posted instead.
     override var wantsExtendedDynamicRangeContent: Bool {
         get { super.wantsExtendedDynamicRangeContent }
         set {
             if Thread.isMainThread { super.wantsExtendedDynamicRangeContent = newValue }
-            else { DispatchQueue.main.sync { super.wantsExtendedDynamicRangeContent = newValue } }
+            else { DispatchQueue.main.async { [weak self] in self?.setExtendedRange(newValue) } }
         }
     }
+
+    private func setExtendedRange(_ on: Bool) { super.wantsExtendedDynamicRangeContent = on }
 }
 
 enum Lang {
