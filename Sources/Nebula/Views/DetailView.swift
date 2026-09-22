@@ -68,8 +68,9 @@ struct DetailView: View {
 
     private var header: some View {
         ZStack(alignment: .bottomLeading) {
-            RemoteImage(url: Art.backdrop(full)) { Theme.bg }
-                .frame(maxWidth: .infinity).frame(height: 480).clipped()
+            Theme.backdrop(height: Theme.detailHeight) {
+                RemoteImage(url: Art.backdrop(full)) { Theme.bg }
+            }
             LinearGradient(stops: [.init(color: .clear, location: 0.3), .init(color: Theme.bg.opacity(0.88), location: 0.82), .init(color: Theme.bg, location: 1)], startPoint: .top, endPoint: .bottom)
             LinearGradient(colors: [Theme.bg.opacity(0.8), .clear], startPoint: .leading, endPoint: .center)
             VStack(alignment: .leading, spacing: 14) {
@@ -82,7 +83,7 @@ struct DetailView: View {
             }
             .padding(.horizontal, Theme.pad)
         }
-        .frame(height: 480)
+        .frame(height: Theme.detailHeight)
     }
 
     private var facts: String {

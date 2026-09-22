@@ -84,8 +84,10 @@ struct StreamsView: View {
 
     private var header: some View {
         ZStack(alignment: .bottomLeading) {
-            RemoteImage(url: target.episode?.thumbnail ?? Art.backdrop(target.item)) { Theme.bg }
-                .frame(maxWidth: .infinity).frame(height: 300).clipped().opacity(0.55)
+            Theme.backdrop(height: 300) {
+                RemoteImage(url: target.episode?.thumbnail ?? Art.backdrop(target.item)) { Theme.bg }
+            }
+            .opacity(0.55)
             LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: Theme.bg, location: 1)], startPoint: .top, endPoint: .bottom)
             VStack(alignment: .leading, spacing: 8) {
                 if let k = Ids.episodeKicker(target.id) { Eyebrow(k) }

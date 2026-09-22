@@ -23,6 +23,27 @@ enum Theme {
 }
 
 extension Theme {
+    /// Art as wide as the page and exactly `height` tall, filled and cropped. The art is an
+    /// overlay on a clear box, so its size never reaches the layout: a filled 16:9 backdrop
+    /// asks for its own width (≈ 924 points at 520 tall), and as a ZStack's child it widened the
+    /// whole hero to that, laying the synopsis out wider than a phone or a narrow window.
+    static func backdrop<Art: View>(height: CGFloat, @ViewBuilder _ art: () -> Art) -> some View {
+        Color.clear
+            .frame(maxWidth: .infinity)
+            .frame(height: height)
+            .overlay { art() }
+            .clipped()
+    }
+
+    /// How tall the full-bleed art is: the window's, and a phone's that leaves room for a row.
+    #if os(iOS)
+    static let heroHeight: CGFloat = 420
+    static let detailHeight: CGFloat = 400
+    #else
+    static let heroHeight: CGFloat = 520
+    static let detailHeight: CGFloat = 480
+    #endif
+
     /// A window caps a reading column at a comfortable width. A phone is narrower than any of
     /// those caps already, so there it means "fill what there is".
     static func cap(_ points: CGFloat) -> CGFloat {

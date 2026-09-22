@@ -60,7 +60,9 @@ struct SkeletonRows: View {
                 }
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        // minWidth as well as maxWidth: with a maximum alone, a frame whose child is wider than
+        // the page (eight cards are ~1 330 points) takes the child's width, not the page's
+        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
         .clipped()
     }
 }
@@ -76,11 +78,11 @@ struct Hero: View {
         let item = items[min(index, items.count - 1)].0
         let addon = items[min(index, items.count - 1)].1
         ZStack(alignment: .bottomLeading) {
-            RemoteImage(url: Art.backdrop(item)) { Theme.bg }
-                .frame(maxWidth: .infinity).frame(height: 520)
-                .clipped()
-                .id(item.id)
-                .transition(.opacity)
+            Theme.backdrop(height: Theme.heroHeight) {
+                RemoteImage(url: Art.backdrop(item)) { Theme.bg }
+                    .id(item.id)
+                    .transition(.opacity)
+            }
             LinearGradient(stops: [.init(color: Theme.bg.opacity(0.0), location: 0.35), .init(color: Theme.bg.opacity(0.85), location: 0.8), .init(color: Theme.bg, location: 1)], startPoint: .top, endPoint: .bottom)
             LinearGradient(colors: [Theme.bg.opacity(0.85), .clear], startPoint: .leading, endPoint: .center)
 
@@ -113,7 +115,7 @@ struct Hero: View {
             }
             .padding(.horizontal, Theme.pad).padding(.bottom, 8)
         }
-        .frame(height: 520)
+        .frame(height: Theme.heroHeight)
         .onHover { hovering = $0 }
         .task(id: items.count) {
             // moves on by itself, and holds still while the pointer is over it
