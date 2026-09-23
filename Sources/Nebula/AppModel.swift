@@ -63,6 +63,13 @@ struct PlayRequest: Identifiable, Equatable {
     }
 }
 
+/// One step of asking every add-on at once, each on its own track: its manifest came in (nil:
+/// it did not answer), or one of its catalogs did (nil: that request failed).
+enum AddonStep: Sendable {
+    case manifest(Int, ManifestInfo?)
+    case catalog(Int, Int, [MetaItem]?)
+}
+
 struct Toast: Equatable, Identifiable {
     let id = UUID()
     var text: String
@@ -95,16 +102,27 @@ final class AppModel: ObservableObject {
     @Published var updateTag: String?
 
     @Published var homeRows: [CatalogRow] = []
-    @Published var homeLoading = false
+    /// True from the first frame: Home is asked for as soon as the window is up, and before that
+    /// the page said "None of the add-ons switched on has a catalog" for a moment.
+    @Published var homeLoading = true
     @Published var homeFailed = false
+    /// Bumped by Try again, so every page built from the add-ons' catalogs (Discover) asks again.
+    @Published var catalogEpoch = 0
+    /// The player that is playing right now — loaded, not paused, not at the end, not failed.
+    /// Set and cleared by that player only, so a player fading out cannot clear its successor's.
+    @Published var playingId: UUID?
     private var homeSig: String?
     private var homeSeq = 0
 
     private var manifestCache: [String: ManifestInfo] = [:]
-    /// Add-ons whose manifest did not answer, and when. For two minutes every page passes them
-    /// by instead of each waiting out the same timeout again; Try again forgets them.
-    private var manifestMisses: [String: Date] = [:]
-    private static let missFor: TimeInterval = 120
+    /// Manifests being fetched. A page waits for one only as long as it can afford; the fetch
+    /// runs on and lands in the cache (or the misses) for whoever asks next.
+    private var manifestLoads: [String: Task<ManifestInfo?, Never>] = [:]
+    /// Add-ons whose manifest did not answer: when, and how many times running. Every page
+    /// passes them by for a while instead of each waiting out the same timeout again — two
+    /// minutes, doubling with each miss in a row up to sixteen. Try again forgets them.
+    private var manifestMisses: [String: (at: Date, count: Int)] = [:]
+    private static let missFor: TimeInterval = 120, missForAtMost: TimeInterval = 960
     private var toastTask: Task<Void, Never>?
 
     var accent: Color { Color(hex: accentHex) }
@@ -202,21 +220,45 @@ final class AppModel: ObservableObject {
 
     // MARK: add-ons
 
-    func manifest(for addon: Addon) async -> ManifestInfo? {
+    /// One add-on's manifest: from the cache; nil straight away for a recent miss; else the
+    /// fetch already out for it, or a new one. The caller waits at most `seconds` (and not at
+    /// all once it is cancelled); the fetch is never cut short by that, and lands for the next.
+    func manifest(for addon: Addon, within seconds: Double = .infinity) async -> ManifestInfo? {
         let u = addon.manifestUrl
         if let m = manifestCache[u] { return m }
-        if let at = manifestMisses[u], Date().timeIntervalSince(at) < AppModel.missFor { return nil }
-        let got = try? await stremio.loadManifest(u)
-        if let m = got { manifestCache[u] = m; manifestMisses[u] = nil }
-        else if !Task.isCancelled { manifestMisses[u] = Date() }    // a request we gave up on proves nothing
-        return got
+        if let miss = manifestMisses[u], Date().timeIntervalSince(miss.at) < AppModel.missWindow(miss.count) { return nil }
+        let load: Task<ManifestInfo?, Never>
+        if let out = manifestLoads[u] {
+            load = out
+        } else {
+            let stremio = stremio
+            load = Task { [weak self] in
+                let got = try? await stremio.loadManifest(u)
+                self?.manifestLanded(u, got)
+                return got
+            }
+            manifestLoads[u] = load
+        }
+        return await Patience.value(of: load, within: seconds) ?? nil
     }
 
-    /// Every add-on's manifest at once, in the add-ons' order; nil where one did not answer.
-    /// One slow add-on used to hold up every page for its whole timeout, the next one after it.
-    func manifests(for list: [Addon]) async -> [ManifestInfo?] {
+    private func manifestLanded(_ u: String, _ m: ManifestInfo?) {
+        manifestLoads[u] = nil
+        if let m = m { manifestCache[u] = m; manifestMisses[u] = nil }
+        else { manifestMisses[u] = (Date(), (manifestMisses[u]?.count ?? 0) + 1) }
+    }
+
+    static func missWindow(_ misses: Int) -> TimeInterval {
+        min(missForAtMost, missFor * pow(2, Double(max(0, min(misses, 10) - 1))))
+    }
+
+    /// Every add-on's manifest at once, in the add-ons' order; nil where one did not answer —
+    /// or had not within `seconds`. An add-on asleep on a free host takes up to the whole 20 s
+    /// timeout to answer, and every page used to wait for it before asking anyone for anything.
+    /// Now a page takes what came in time, and the late one lands in the cache for the next.
+    func manifests(for list: [Addon], within seconds: Double = 4) async -> [ManifestInfo?] {
         await withTaskGroup(of: (Int, ManifestInfo?).self) { group in
-            for (i, a) in list.enumerated() { group.addTask { (i, await self.manifest(for: a)) } }
+            for (i, a) in list.enumerated() { group.addTask { (i, await self.manifest(for: a, within: seconds)) } }
             var out = [ManifestInfo?](repeating: nil, count: list.count)
             for await (i, m) in group { out[i] = m }
             return out
@@ -255,9 +297,13 @@ final class AppModel: ObservableObject {
 
     func invalidateHome() { homeSig = nil; Task { await loadHome() } }
 
-    /// Home's Try again.
-    func retryHome() { forgetMisses(); invalidateHome() }
+    /// Home's Try again — and Discover's, which is built from the same catalogs.
+    func retryHome() { forgetMisses(); catalogEpoch += 1; invalidateHome() }
 
+    /// Each add-on on its own track: the moment its manifest is in, its catalogs are asked, and
+    /// each row paints as it arrives, in the add-ons' order. Home used to wait for EVERY
+    /// manifest first, so one add-on asleep on a free host blanked it for the full timeout;
+    /// now that one's rows simply join when it wakes.
     func loadHome() async {
         let active = activeAddons
         let sig = active.map(\.manifestUrl).joined(separator: "\n")
@@ -266,32 +312,42 @@ final class AppModel: ObservableObject {
         homeSeq += 1
         let seq = homeSeq
         homeLoading = true; homeFailed = false
-        let infos = await manifests(for: active)
-        guard seq == homeSeq else { return }
-        var wanted: [(Addon, CatalogRef)] = []
-        for (a, m) in zip(active, infos) {
-            for c in m?.catalogs ?? [] where c.browsable { wanted.append((a, c)) }
-        }
-        let misses = infos.filter { $0 == nil }.count
-        let targets = Array(wanted.prefix(24))
-        // nothing to ask — every catalog add-on switched off, or none answered: the old rows go
-        if targets.isEmpty { homeRows = [] }
-        var rows = [CatalogRow?](repeating: nil, count: targets.count)
         let stremio = stremio
-        await withTaskGroup(of: (Int, [MetaItem]).self) { group in
-            for (i, t) in targets.enumerated() {
-                group.addTask { (i, (try? await stremio.loadCatalog(base: t.0.base, catalog: t.1)) ?? []) }
-            }
-            for await (i, items) in group {
-                guard seq == homeSeq else { return }
-                if !items.isEmpty { rows[i] = CatalogRow(addon: targets[i].0, catalog: targets[i].1, items: Array(items.prefix(30))) }
-                homeRows = rows.compactMap { $0 }       // rows paint as they arrive, in the add-ons' order
+        let cap = 24                                            // catalogs on Home, at most
+        var catalogs = [[CatalogRef]](repeating: [], count: active.count)
+        var rows = [[CatalogRow?]](repeating: [], count: active.count)
+        var misses = 0, asked = 0, painted = false
+        func paint() {
+            homeRows = Array(rows.joined().compactMap { $0 }.prefix(cap))
+            painted = true
+        }
+        await withTaskGroup(of: AddonStep.self) { group in
+            for (i, a) in active.enumerated() { group.addTask { .manifest(i, await self.manifest(for: a)) } }
+            while let step = await group.next() {
+                guard seq == homeSeq else { group.cancelAll(); return }
+                switch step {
+                case .manifest(let i, let m):
+                    guard let m = m else { misses += 1; continue }
+                    let want = Array(m.catalogs.filter(\.browsable).prefix(cap))
+                    catalogs[i] = want
+                    rows[i] = Array(repeating: nil, count: want.count)
+                    asked += want.count
+                    let base = active[i].base
+                    for (j, c) in want.enumerated() {
+                        group.addTask { .catalog(i, j, try? await stremio.loadCatalog(base: base, catalog: c)) }
+                    }
+                case .catalog(let i, let j, let items):
+                    if let items = items, !items.isEmpty { rows[i][j] = CatalogRow(addon: active[i], catalog: catalogs[i][j], items: Array(items.prefix(30))) }
+                    paint()
+                }
             }
         }
         guard seq == homeSeq else { return }
+        // nothing was asked — every catalog add-on switched off, or none answered: the old rows go
+        if !painted { homeRows = [] }
         homeLoading = false
         // an offline launch fails every manifest: that is a failure to say, not a blank page
-        homeFailed = homeRows.isEmpty && (!targets.isEmpty || misses > 0)
+        homeFailed = homeRows.isEmpty && (asked > 0 || misses > 0)
         if homeFailed { homeSig = nil }
     }
 
@@ -302,8 +358,9 @@ final class AppModel: ObservableObject {
         let active = activeAddons
         let origin = active.first { $0.manifestUrl == addonUrl }
         let others = active.filter { $0.manifestUrl != addonUrl }
-        // the others' manifests come in while the title's own add-on is asked
-        async let infos = manifests(for: others)
+        // the others' manifests come in while the title's own add-on is asked; a page with
+        // nothing to show yet can afford to wait longer for them than a list can
+        async let infos = manifests(for: others, within: 10)
         func usable(_ m: FullMeta?) -> Bool { m.map { !$0.name.isEmpty || !$0.videos.isEmpty } ?? false }
         if let o = origin, let meta = try? await stremio.loadFullMeta(base: o.base, type: item.type, id: item.id), usable(meta) {
             return (meta, o)

@@ -55,7 +55,17 @@ enum Platform {
         #if canImport(AppKit)
         return "Nebula for Mac"
         #else
-        return "Nebula for iPhone"
+        return UIDevice.current.userInterfaceIdiom == .pad ? "Nebula for iPad" : "Nebula for iPhone"
+        #endif
+    }
+
+    /// Why decoding on the graphics chip is worth having, in this device's terms: a Mac's fans,
+    /// a phone's battery.
+    static var hardwareDecodingGain: String {
+        #if canImport(AppKit)
+        return "Cooler and quieter."
+        #else
+        return "Easier on the battery, and the \(deviceWord) stays cooler."
         #endif
     }
 

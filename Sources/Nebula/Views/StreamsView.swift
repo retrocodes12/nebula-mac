@@ -11,6 +11,10 @@ struct StreamsView: View {
     @State private var unreachable = 0
     @State private var filter: String?
     @State private var fresh = false
+    /// The series lookup for a page opened from Continue watching, which runs beside the streams.
+    @State private var hydration: Task<Void, Never>?
+    /// The row whose tap is waiting for that lookup.
+    @State private var waiting: String?
 
     init(target: StreamsTarget) { _target = State(initialValue: target) }
 
@@ -37,8 +41,9 @@ struct StreamsView: View {
                                 Text("\(s.streams.count)").font(.system(size: 12, design: .monospaced)).foregroundStyle(Theme.label3)
                             }
                             VStack(spacing: 6) {
-                                ForEach(Array(s.streams.enumerated()), id: \.offset) { _, st in
-                                    StreamRow(stream: st, addonName: s.addon.name) { model.play(st, target: target, from: s.addon, fresh: fresh) }
+                                ForEach(Array(s.streams.enumerated()), id: \.offset) { i, st in
+                                    let key = s.id + "#\(i)"
+                                    StreamRow(stream: st, addonName: s.addon.name, busy: waiting == key) { play(st, from: s.addon, key: key) }
                                 }
                             }
                         }
@@ -63,9 +68,29 @@ struct StreamsView: View {
         .overlay(alignment: .topLeading) { BackButton().padding(.leading, 22).padding(.top, 44) }
         .task {
             // the series is looked up beside the streams, not before them
-            async let hydrated: Void = hydrate()
-            await load()
-            await hydrated
+            let h = Task { await hydrate() }
+            hydration = h
+            await withTaskCancellationHandler {
+                await load()
+                await h.value
+            } onCancel: { h.cancel() }
+        }
+    }
+
+    /// A tap plays — but opened from Continue watching, not before the series lookup is in
+    /// (or three seconds have gone): without the episode list the player has no Next episode
+    /// and no autoplay, and a quick tap used to start it with neither.
+    private func play(_ st: StreamItem, from addon: Addon, key: String) {
+        guard waiting == nil else { return }
+        guard let h = hydration, needsSeries else {
+            model.play(st, target: target, from: addon, fresh: fresh)
+            return
+        }
+        waiting = key
+        Task {
+            _ = await Patience.value(of: h, within: 3)
+            waiting = nil
+            model.play(st, target: target, from: addon, fresh: fresh)
         }
     }
 
@@ -115,11 +140,14 @@ struct StreamsView: View {
         }
     }
 
+    /// An episode id with no series around it yet.
+    private var needsSeries: Bool { target.episode == nil && target.id != target.item.id }
+
     /// Opened from Continue watching there is only an episode id: fetch the series so the header
     /// can name the episode and the player knows what comes next.
     private func hydrate() async {
-        guard target.episode == nil, target.id != target.item.id else { return }
-        guard let (m, _) = await model.loadMeta(target.item, addonUrl: target.addonUrl) else { return }
+        guard needsSeries else { return }
+        guard let (m, _) = await model.loadMeta(target.item, addonUrl: target.addonUrl), !Task.isCancelled else { return }
         target.videos = m.videos
         target.episode = m.videos.first { $0.id == target.id }
         if target.item.background == nil { target.item.background = m.background }
@@ -130,6 +158,8 @@ struct StreamsView: View {
 struct StreamRow: View {
     let stream: StreamItem
     let addonName: String
+    /// Tapped, and waiting for something before it can play.
+    var busy = false
     let action: () -> Void
     @State private var hover = false
 
@@ -160,7 +190,8 @@ struct StreamRow: View {
                 HStack(spacing: 8) {
                     ForEach(match.badges, id: \.self) { BadgeImage(file: $0) }
                 }
-                Image(systemName: "play.fill").font(.system(size: 12)).foregroundStyle(hover ? Theme.ink : Theme.label3)
+                if busy { ProgressView().controlSize(.small).frame(width: 14) }
+                else { Image(systemName: "play.fill").font(.system(size: 12)).foregroundStyle(hover ? Theme.ink : Theme.label3) }
             }
             .padding(.horizontal, 14).padding(.vertical, 10)
             .background(RoundedRectangle(cornerRadius: 12).fill(hover ? Theme.surface2 : Theme.surface))

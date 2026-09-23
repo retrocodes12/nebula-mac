@@ -16,6 +16,7 @@ struct PlayerScreen: View {
     /// What the engine was handed, so Try again can hand it the same.
     @State private var resolved: String?
     @State private var resolvedKeys: [String: String] = [:]
+    @State private var retrying = false
     @State private var nextOffered = false
     @State private var nextBusy = false
     @State private var lastSaved: Double = -100
@@ -356,12 +357,23 @@ struct PlayerScreen: View {
         }
     }
 
-    /// The same stream again, from where it stopped (a live one from its edge).
+    /// The same stream again, from where it stopped (a live one from its edge). The source is
+    /// resolved afresh, not replayed: protected DASH plays through the loopback manifest cache,
+    /// and the address handed out before may name a port that listener has since given up.
     private func retry() {
-        guard let address = resolved else { return }
+        guard resolved != nil, !retrying else { return }
         let at = mpv.isLive ? 0 : max(0, mpv.timePos - 2)
+        retrying = true
+        mpv.failure = nil; mpv.buffering = true
         captions.reopened()
-        mpv.load(url: address, startAt: at, keys: resolvedKeys, headers: request.stream.headers)
+        let s = request.stream
+        Task {
+            let got = await PlaybackRules.source(for: s, maxHeight: model.prefs.maxHeight, stremio: model.stremio)
+            let keys = got.keys.isEmpty ? resolvedKeys : got.keys     // a licence that did not answer this time
+            resolved = got.address; resolvedKeys = keys
+            retrying = false
+            mpv.load(url: got.address, startAt: at, keys: keys, headers: s.headers)
+        }
         wake()
     }
 

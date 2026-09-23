@@ -483,6 +483,74 @@ final class HostileDataTests: XCTestCase {
         """#)!
         XCTAssertEqual(Stremio.parseStreams(j).map(\.videoSize), [0, 0, 1_073_741_824])
     }
+
+    /// A resume point from another client or the sync server with a position no film has.
+    /// It used to reach `Int(...)` in the Continue watching card and the engine's start and trap.
+    func testImpossiblePositionsFromTheWireReadAsZero() {
+        let hostile: [(Any, Any)] = [("inf", "inf"), (1e300, 1e300), ("nan", 3000.0), (-50.0, 3000.0), (600.0, "-inf"), (600.0, 2e7)]
+        for (pos, dur) in hostile {
+            let r = ProgressRec(wire: ["type": "movie", "id": "a", "pos": pos, "dur": dur, "at": 5])!
+            for v in [r.pos, r.dur] { XCTAssertTrue(v.isFinite && v >= 0 && v < 10_000_000, "\(pos) / \(dur) gave \(v)") }
+            XCTAssertTrue(r.fraction.isFinite)
+        }
+        XCTAssertEqual(ProgressRec(wire: ["type": "movie", "id": "a", "pos": 600.5, "dur": "3000"])!.pos, 600.5, "a real position is left alone")
+
+        // the same through a store written by someone else: nothing to resume, nothing to show
+        let s = tempStore()
+        s.setObject("progress", ["movie:a": ["type": "movie", "id": "a", "name": "A", "pos": "inf", "dur": 1e300, "at": 5.0] as JSONObject,
+                                 "movie:b": ["type": "movie", "id": "b", "name": "B", "pos": 900.0, "dur": "inf", "at": 6.0] as JSONObject])
+        let p = ProgressStore(store: s)
+        XCTAssertEqual(p.resumeAt("movie", "a"), 0)
+        XCTAssertEqual(p.resumeAt("movie", "b"), 0)
+        XCTAssertTrue(p.continueList().isEmpty)
+
+        // and the player's own note cannot put one there either
+        var bad = ProgressRec(type: "movie", id: "c"); bad.pos = .infinity; bad.dur = .nan
+        p.note(bad)
+        XCTAssertTrue(p.all().values.allSatisfy { $0.pos.isFinite && $0.dur.isFinite })
+    }
+}
+
+final class PatienceTests: XCTestCase {
+    func testAQuickAnswerComesBack() async {
+        let t = Task { () -> Int in 7 }
+        let v = await Patience.value(of: t, within: 5)
+        XCTAssertEqual(v, 7)
+    }
+
+    /// The caller stops waiting at the deadline, and the work runs on and still finishes.
+    func testASlowAnswerIsNotWaitedForButStillLands() async {
+        final class Box: @unchecked Sendable { var landed = false }
+        let box = Box()
+        let t = Task { () -> Int in
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            box.landed = true
+            return 9
+        }
+        let start = Date()
+        let v = await Patience.value(of: t, within: 0.2)
+        XCTAssertNil(v)
+        XCTAssertLessThan(Date().timeIntervalSince(start), 1.0, "the wait ended at its deadline")
+        XCTAssertFalse(box.landed)
+        let late = await t.value
+        XCTAssertEqual(late, 9)
+        XCTAssertTrue(box.landed, "the work was not cancelled by the caller giving up")
+    }
+
+    func testCancellingTheCallerEndsTheWait() async {
+        let slow = Task { () -> Int in
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            return 1
+        }
+        let start = Date()
+        let caller = Task { await Patience.value(of: slow, within: .infinity) }
+        try? await Task.sleep(nanoseconds: 150_000_000)
+        caller.cancel()
+        let v = await caller.value
+        XCTAssertNil(v)
+        XCTAssertLessThan(Date().timeIntervalSince(start), 2.0)
+        slow.cancel()
+    }
 }
 
 final class ConcurrentStoreTests: XCTestCase {

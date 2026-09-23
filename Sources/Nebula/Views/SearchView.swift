@@ -75,25 +75,34 @@ struct SearchView: View {
         seq += 1
         let mine = seq
         results = []; searching = true; failedAll = false; unreachable = 0
+        let list = model.activeAddons
+        let m = model, stremio = model.stremio
         Task {
-            let list = model.activeAddons
-            let infos = await model.manifests(for: list)
-            var targets: [(Addon, CatalogRef)] = []
-            for (a, m) in zip(list, infos) {
-                for c in m?.catalogs ?? [] where c.search { targets.append((a, c)) }
-            }
-            let misses = infos.filter { $0 == nil }.count
-            var rows = [CatalogRow?](repeating: nil, count: targets.count)
-            var failures = 0, answered = 0
-            let stremio = model.stremio
-            await withTaskGroup(of: (Int, [MetaItem]?).self) { group in
-                for (i, t) in targets.enumerated() { group.addTask { (i, try? await stremio.loadCatalog(base: t.0.base, catalog: t.1, query: q)) } }
-                for await (i, items) in group {
-                    guard mine == seq else { return }
-                    guard let items = items else { failures += 1; continue }
-                    answered += 1
-                    if !items.isEmpty { rows[i] = CatalogRow(addon: targets[i].0, catalog: targets[i].1, items: Array(items.prefix(40))) }
-                    results = rows.compactMap { $0 }
+            // each add-on on its own track: its search catalogs are asked the moment its manifest
+            // is in, so one add-on asleep on a free host no longer holds up every search
+            var catalogs = [[CatalogRef]](repeating: [], count: list.count)
+            var rows = [[CatalogRow?]](repeating: [], count: list.count)
+            var misses = 0, failures = 0, answered = 0
+            await withTaskGroup(of: AddonStep.self) { group in
+                for (i, a) in list.enumerated() { group.addTask { .manifest(i, await m.manifest(for: a)) } }
+                while let step = await group.next() {
+                    guard mine == seq else { group.cancelAll(); return }
+                    switch step {
+                    case .manifest(let i, let info):
+                        guard let info = info else { misses += 1; continue }
+                        let want = info.catalogs.filter(\.search)
+                        catalogs[i] = want
+                        rows[i] = Array(repeating: nil, count: want.count)
+                        let base = list[i].base
+                        for (j, c) in want.enumerated() {
+                            group.addTask { .catalog(i, j, try? await stremio.loadCatalog(base: base, catalog: c, query: q)) }
+                        }
+                    case .catalog(let i, let j, let items):
+                        guard let items = items else { failures += 1; continue }
+                        answered += 1
+                        if !items.isEmpty { rows[i][j] = CatalogRow(addon: list[i], catalog: catalogs[i][j], items: Array(items.prefix(40))) }
+                        results = rows.joined().compactMap { $0 }
+                    }
                 }
             }
             guard mine == seq else { return }
@@ -127,6 +136,11 @@ struct DiscoverSection: View {
     @State private var current: CatalogTarget?
     @State private var genre: String?
     @State private var ready = false
+    /// No catalog to offer because add-ons did not answer — not because none has one.
+    @State private var unreachable = false
+
+    /// What Discover is built from: the add-ons, and Try again.
+    private struct Source: Equatable { var addons: [Addon]; var epoch: Int }
 
     private var types: [String] {
         var seen = Set<String>()
@@ -160,27 +174,67 @@ struct DiscoverSection: View {
                     Task { await pager.more(addon: cur.addon, catalog: cur.catalog, genre: genre, stremio: model.stremio) }
                 }
                 if pager.loading { ProgressView().controlSize(.small).frame(maxWidth: .infinity).padding() }
+                else if pager.failed {
+                    EmptyState(icon: "wifi.slash", title: "This catalog did not answer", detail: "Check the connection, or try again in a moment.",
+                               actionTitle: "Try again", action: { Task { await pager.reset(addon: cur.addon, catalog: cur.catalog, genre: genre, stremio: model.stremio) } })
+                }
                 else if pager.items.isEmpty { EmptyState(icon: "square.grid.2x2", title: "Nothing here.", detail: "Pick another catalog or genre.") }
+            } else if ready && unreachable {
+                // an offline launch: say so, and offer the way back — it used to read "Nothing to
+                // browse yet" for the rest of the session
+                EmptyState(icon: "wifi.slash", title: "Your add-ons could not be reached", detail: "Discover needs them to answer. Check the connection and try again.",
+                           actionTitle: "Try again", action: { model.retryHome() })
             } else if ready {
                 EmptyState(icon: "square.grid.2x2", title: "Nothing to browse yet", detail: "Add an add-on with a catalog and it shows up here.")
             } else {
                 ProgressView().controlSize(.small)
             }
         }
-        .task(id: model.addons) { await load() }
+        .task(id: Source(addons: model.addons, epoch: model.catalogEpoch)) { await load() }
     }
 
     private func key(_ t: CatalogTarget) -> String { t.addon.manifestUrl + "|" + t.catalog.type + "|" + t.catalog.id }
 
-    private func load() async {
-        var opts: [CatalogTarget] = []
-        let list = model.activeAddons
-        for (a, m) in zip(list, await model.manifests(for: list)) {
-            for c in m?.catalogs ?? [] where c.browsable { opts.append(CatalogTarget(addon: a, catalog: c)) }
+    private func targets(_ list: [Addon], _ infos: [ManifestInfo?]) -> [CatalogTarget] {
+        var out: [CatalogTarget] = []
+        for (a, m) in zip(list, infos) {
+            for c in m?.catalogs ?? [] where c.browsable { out.append(CatalogTarget(addon: a, catalog: c)) }
         }
+        return out
+    }
+
+    /// The catalogs of whichever add-ons answer within a few seconds; the ones still waking
+    /// join the list when they land. Keyed on the add-ons and on Try again, and a load that a
+    /// newer one replaced writes nothing.
+    private func load() async {
+        let list = model.activeAddons
+        var infos = await model.manifests(for: list, within: 4)
+        guard !Task.isCancelled else { return }
+        if infos.contains(where: { $0 == nil }) {
+            let early = targets(list, infos)
+            if !early.isEmpty { await show(early, unreachable: false) }
+            guard !Task.isCancelled else { return }
+            // the late ones get the rest of their time (a recent miss answers nil at once)
+            infos = await model.manifests(for: list, within: 25)
+            guard !Task.isCancelled else { return }
+        }
+        let opts = targets(list, infos)
+        await show(opts, unreachable: opts.isEmpty && infos.contains { $0 == nil })
+    }
+
+    private func show(_ opts: [CatalogTarget], unreachable missed: Bool) async {
+        let changed = opts.map(key) != options.map(key)
         options = opts
+        unreachable = missed
         ready = true
-        // the last pick comes back; else the first catalog there is
+        // the pick in hand stays when it is still on offer; a grid that failed asks again
+        if let cur = current, let same = opts.first(where: { key($0) == key(cur) }) {
+            if pager.failed || (!changed && pager.items.isEmpty && !pager.loading) {
+                await pager.reset(addon: same.addon, catalog: same.catalog, genre: genre, stremio: model.stremio)
+            }
+            return
+        }
+        // else the last pick comes back; else the first catalog there is
         let saved = model.prefs.discover
         let restored = opts.first { key($0) == saved.str("key") }
         if let t = restored ?? opts.first {

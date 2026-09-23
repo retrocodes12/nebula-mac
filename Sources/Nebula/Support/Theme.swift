@@ -253,7 +253,9 @@ enum Fmt {
 
     /// "1 h 12 min left", "12 min left".
     static func left(_ secs: Double) -> String {
-        let m = max(1, Int((secs / 60).rounded()))
+        // the length comes off the wire; `Int(...)` of an infinite or enormous one traps
+        guard secs.isFinite else { return "" }
+        let m = max(1, Int((min(max(secs, 0), 10_000_000) / 60).rounded()))
         return m >= 60 ? "\(m / 60) h \(m % 60) min left" : "\(m) min left"
     }
 }

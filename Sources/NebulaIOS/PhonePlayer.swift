@@ -20,6 +20,7 @@ struct PhonePlayer: View {
     /// What the engine was handed, so Try again can hand it the same.
     @State private var resolved: String?
     @State private var resolvedKeys: [String: String] = [:]
+    @State private var retrying = false
     @State private var nextOffered = false
     @State private var nextBusy = false
     @State private var lastSaved: Double = -100
@@ -29,6 +30,8 @@ struct PhonePlayer: View {
     @State private var flashTask: Task<Void, Never>?
     /// Playing when a call (or another app's sound) took over, so play on when it hands back.
     @State private var resumeAfterInterruption = false
+    /// The lock screen's card and the headphones' buttons.
+    @State private var nowPlaying = NowPlaying()
 
     enum PlayerSheet: String, Identifiable { case audio, subtitles, speed, info; var id: String { rawValue } }
 
@@ -80,6 +83,8 @@ struct PhonePlayer: View {
         .onChange(of: mpv.timePos) { t in tick(t) }
         .onChange(of: mpv.ended) { e in if e { reachedEnd() } }
         .onChange(of: mpv.loaded) { l in if l { loadedNow() } }
+        .onChange(of: playing) { p in playingNow(p) }
+        .onChange(of: mpv.duration) { _ in nowPlaying.refresh() }
         // the hide timer stands down while a sheet is up, so closing one has to re-arm it or the
         // chrome sits there for good
         .onChange(of: sheet) { s in if s == nil { wake() } }
@@ -97,6 +102,16 @@ struct PhonePlayer: View {
         .onReceive(NotificationCenter.default.publisher(for: AVAudioSession.routeChangeNotification).receive(on: DispatchQueue.main)) { n in
             routeChanged(n)
         }
+    }
+
+    /// Playing, not paused, not at the end, not failed.
+    private var playing: Bool { mpv.loaded && !mpv.paused && !mpv.ended && mpv.failure == nil }
+
+    /// The screen stays awake while a picture moves, not while a paused or failed one sits
+    /// there. The model holds whose it is, so a player on its way out cannot clear its successor.
+    private func playingNow(_ p: Bool) {
+        if p { model.playingId = request.id } else if model.playingId == request.id { model.playingId = nil }
+        nowPlaying.refresh()
     }
 
     // MARK: sound
@@ -328,9 +343,15 @@ struct PhonePlayer: View {
     // MARK: life cycle — the Mac's
 
     private func start() {
-        // PhoneRoot owns the session and the idle timer; asking again here is harmless and
+        // PhoneRoot takes the session when a player opens; asking again here is harmless and
         // makes sure the session is up before the engine opens its output
         Audio.begin()
+        // started with the phone locked (the next episode, rolling on in a pocket): sound only,
+        // as if it had gone to the background while playing — the GPU may not draw back there
+        if UIApplication.shared.applicationState == .background { mpv.setVideo(false) }
+        let t = request.target
+        nowPlaying.start(id: request.id, mpv: mpv, title: request.kicker ?? request.title, subtitle: request.kicker == nil ? nil : request.title,
+                         step: step, art: t.episode?.thumbnail ?? t.item.background ?? t.item.poster)
         let s = request.stream
         Task {
             let got = await PlaybackRules.source(for: s, maxHeight: model.prefs.maxHeight, stremio: model.stremio)
@@ -347,6 +368,7 @@ struct PhonePlayer: View {
     }
 
     private func loadedNow() {
+        if UIApplication.shared.applicationState == .background { mpv.setVideo(false) }
         if captions.fileLoaded() { attachSubs() }
         let want = model.prefs.audioLang
         if !want.isEmpty, let t = mpv.tracks.first(where: { $0.type == "audio" && $0.lang == want }), !t.selected {
@@ -360,6 +382,7 @@ struct PhonePlayer: View {
     }
 
     private func tick(_ t: Double) {
+        nowPlaying.refresh()
         guard mpv.loaded, !mpv.isLive, mpv.duration > 0 else { return }
         if abs(t - lastSaved) >= 5 { lastSaved = t; save() }
         if model.prefs.autoplayNext, next != nil { nextOffered = mpv.duration - t <= 40 }
@@ -402,12 +425,23 @@ struct PhonePlayer: View {
         }
     }
 
-    /// The same stream again, from where it stopped (a live one from its edge).
+    /// The same stream again, from where it stopped (a live one from its edge). The source is
+    /// resolved afresh, not replayed: protected DASH plays through the loopback manifest cache,
+    /// and the address handed out before may name a port that listener has since given up.
     private func retry() {
-        guard let address = resolved else { return }
+        guard resolved != nil, !retrying else { return }
         let at = mpv.isLive ? 0 : max(0, mpv.timePos - 2)
+        retrying = true
+        mpv.failure = nil; mpv.buffering = true
         captions.reopened()
-        mpv.load(url: address, startAt: at, keys: resolvedKeys, headers: request.stream.headers)
+        let s = request.stream
+        Task {
+            let got = await PlaybackRules.source(for: s, maxHeight: model.prefs.maxHeight, stremio: model.stremio)
+            let keys = got.keys.isEmpty ? resolvedKeys : got.keys     // a licence that did not answer this time
+            resolved = got.address; resolvedKeys = keys
+            retrying = false
+            mpv.load(url: got.address, startAt: at, keys: keys, headers: s.headers)
+        }
         wake()
     }
 
@@ -415,7 +449,12 @@ struct PhonePlayer: View {
         save()
         hideTask?.cancel()
         flashTask?.cancel()
-        mpv.close()
+        nowPlaying.finish()
+        if model.playingId == request.id { model.playingId = nil }
+        // the sound goes back once the engine has let go of its output, so the music the viewer
+        // had on is told to go on — unless another player has taken the screen meanwhile
+        let m = model
+        mpv.close { if m.player == nil { Audio.end() } }
         Task { await model.cloud.flush() }
     }
 

@@ -100,8 +100,11 @@ final class MPVController: ObservableObject {
     // MARK: commands
 
     /// Start a stream. Keys and headers apply to this file only.
-    func load(url: String, startAt: Double = 0, keys: [String: String] = [:], headers: [String: String] = [:]) {
+    func load(url: String, startAt given: Double = 0, keys: [String: String] = [:], headers: [String: String] = [:]) {
         guard mpv != nil else { return }
+        // a resume point is somebody else's number (the TV's, the sync server's): `Int(...)` of
+        // an infinite or enormous one traps, so anything that is not a place in a film is 0
+        let startAt = given.isFinite && given > 0 && given < 10_000_000 ? given : 0
         DispatchQueue.main.async { [self] in
             loaded = false; ended = false; failure = nil; buffering = true; timePos = startAt; duration = 0; tracks = []
         }
@@ -154,13 +157,21 @@ final class MPVController: ObservableObject {
 
     func stop() { command("stop", []) }
 
-    /// Let go of the engine. Destroying it waits for its threads, so that happens off the main thread.
-    func close() {
-        guard let h = mpv, !closed else { return }
+    /// Let go of the engine. Destroying it waits for its threads, so that happens off the main
+    /// thread; `then` runs on the main thread once it is gone — its sound output with it, which
+    /// is when a phone can hand the audio session back.
+    func close(then done: (@MainActor @Sendable () -> Void)? = nil) {
+        guard let h = mpv, !closed else {
+            if let done = done { Task { @MainActor in done() } }
+            return
+        }
         closed = true
         mpv_set_wakeup_callback(h, nil, nil)
         mpv = nil
-        queue.async { mpv_terminate_destroy(h) }
+        queue.async {
+            mpv_terminate_destroy(h)
+            if let done = done { Task { @MainActor in done() } }
+        }
     }
 
     deinit { close() }

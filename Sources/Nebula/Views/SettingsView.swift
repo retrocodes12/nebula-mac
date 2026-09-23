@@ -50,7 +50,7 @@ struct SettingsView: View {
                             HStack(spacing: 6) { ForEach([0, 1080, 720, 480], id: \.self) { h in Chip(text: h == 0 ? "Best" : "\(h)p", on: maxHeight == h) { maxHeight = h } } }
                         }
                         Hairline()
-                        PanelRow(title: "Decode on the graphics chip", detail: "Cooler and quieter. Switch it off if a film shows a broken picture.") {
+                        PanelRow(title: "Decode on the graphics chip", detail: "\(Platform.hardwareDecodingGain) Switch it off if a film shows a broken picture.") {
                             Toggle("", isOn: $hwdec).toggleStyle(.switch).labelsHidden().controlSize(.small)
                         }
                     }

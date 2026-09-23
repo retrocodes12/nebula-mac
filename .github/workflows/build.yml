@@ -73,8 +73,8 @@ jobs:
           for i in $(seq 1 150); do kill -0 $PID 2>/dev/null || break; sleep 2; done
           kill $PID 2>/dev/null || true
           ls -la shots
+      # fatal: a link that opens a second window is the M14 regression, and it must turn the run red
       - name: Hand-off — a nebula:// link plays in the open window, not a second one
-        continue-on-error: true
         run: |
           /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$PWD/dist/Nebula.app"
           cat > "$RUNNER_TEMP/windows.swift" <<'SWIFT'
@@ -100,6 +100,7 @@ jobs:
           kill $PID 2>/dev/null || true
           test "$COUNT" = 1
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: shots
           path: shots

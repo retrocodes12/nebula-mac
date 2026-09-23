@@ -30,11 +30,19 @@ public struct ProgressRec: Equatable, Sendable {
 
     public var fraction: Double { dur > 0 ? min(1, max(0, pos / dur)) : 0 }
 
+    /// A position or a length as the wire may carry it, made safe to count with. Four other
+    /// clients and a sync server write these; "inf" or 1e300 read as a Double and then trapped
+    /// the first `Int(...)` that met them (the Continue watching card, the engine's start).
+    /// Anything not finite, below zero or past 10 million seconds (115 days) reads as 0.
+    public static func seconds(_ d: Double) -> Double {
+        d.isFinite && d >= 0 && d < 10_000_000 ? d : 0
+    }
+
     init?(wire r: JSONObject) {
         guard let id = r.text("id") else { return nil }
         type = r.str("type"); self.id = id
         name = r.str("name"); poster = r.text("poster"); shape = r.text("shape") ?? "poster"; back = r.text("back")
-        addonUrl = r.str("addonUrl"); pos = r.num("pos"); dur = r.num("dur")
+        addonUrl = r.str("addonUrl"); pos = ProgressRec.seconds(r.num("pos")); dur = ProgressRec.seconds(r.num("dur"))
         done = r.bool("done"); dismissed = r.bool("dismissed"); hand = r.bool("hand"); at = r.int64("at")
     }
 
@@ -126,8 +134,10 @@ public final class ProgressStore: @unchecked Sendable {
         return r.pos
     }
 
-    public func note(_ rec: ProgressRec) {
-        if rec.id.isEmpty { return }
+    public func note(_ given: ProgressRec) {
+        if given.id.isEmpty { return }
+        var rec = given
+        rec.pos = ProgressRec.seconds(rec.pos); rec.dur = ProgressRec.seconds(rec.dur)
         let k = ProgressStore.key(rec.type, rec.id)
         mutate { m in
             if rec.done || (rec.dur > 0 && rec.pos > rec.dur - ProgressStore.endGap) {
