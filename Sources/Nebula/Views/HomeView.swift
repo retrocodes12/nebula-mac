@@ -115,6 +115,7 @@ struct Hero: View {
                         HStack(spacing: 8) { Image(systemName: "play.fill").scaledFont(size: 12); Text("Watch") }
                     }
                     .buttonStyle(PillButtonStyle())
+                    .layoutPriority(1)                         // its whole width first; the dots give way
                     RoundAction(icon: model.library.contains(item.type, item.id) ? "checkmark" : "plus", label: "My List", on: model.library.contains(item.type, item.id)) {
                         model.library.toggle(item, addonUrl: addon.manifestUrl)
                     }

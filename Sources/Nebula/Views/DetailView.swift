@@ -110,6 +110,7 @@ struct DetailView: View {
                 HStack(spacing: 8) { Image(systemName: "play.fill").scaledFont(size: 12); Text(playLabel) }
             }
             .buttonStyle(PillButtonStyle())
+            .layoutPriority(1)
             .disabled(loading && meta == nil && item.type == "series")
             let saved = model.library.contains(item.type, item.id)
             RoundAction(icon: saved ? "checkmark" : "plus", label: saved ? "Remove from My List" : "Add to My List", on: saved) {
