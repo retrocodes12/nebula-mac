@@ -102,7 +102,7 @@ enum Launch {
         if let page = value("--page") {
             Task {
                 let want = page == "series" ? "series" : "movie"
-                func firstOf(_ type: String) -> (MetaItem, Addon)? {
+                @MainActor func firstOf(_ type: String) -> (MetaItem, Addon)? {
                     for r in model.homeRows { if let i = r.items.first(where: { $0.type == type }) { return (i, r.addon) } }
                     return nil
                 }
