@@ -110,23 +110,11 @@ struct Hero: View {
                 if let d = item.description {
                     Text(d).scaledFont(size: 14).foregroundStyle(.white.opacity(0.82)).lineLimit(3).fixedSize(horizontal: false, vertical: true).frame(maxWidth: Theme.cap(520), alignment: .leading)
                 }
-                HStack(spacing: 12) {
-                    Button(action: { model.open(item, addonUrl: addon.manifestUrl) }) {
-                        HStack(spacing: 8) { Image(systemName: "play.fill").scaledFont(size: 12); Text("Watch") }
-                    }
-                    .buttonStyle(PillButtonStyle())
-                    .layoutPriority(1)                         // its whole width first; the dots give way
-                    RoundAction(icon: model.library.contains(item.type, item.id) ? "checkmark" : "plus", label: "My List", on: model.library.contains(item.type, item.id)) {
-                        model.library.toggle(item, addonUrl: addon.manifestUrl)
-                    }
-                    Spacer()
-                    HStack(spacing: Hero.dotGap) {
-                        ForEach(items.indices, id: \.self) { i in
-                            Capsule().fill(i == index ? Color.white : Color.white.opacity(0.3)).frame(width: i == index ? 18 : 6, height: 6)
-                                .dotTarget()
-                                .onTapGesture { withAnimation(.easeInOut(duration: 0.4)) { index = i } }
-                        }
-                    }
+                // one row when it fits; at a large text size on a phone the dots go under the
+                // buttons rather than push the row past the page's margin
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 12) { actions(item, addon); Spacer(); dots }
+                    VStack(alignment: .leading, spacing: 12) { HStack(spacing: 12) { actions(item, addon) }; dots }
                 }
                 .id(model.libraryVersion)
             }
@@ -139,6 +127,26 @@ struct Hero: View {
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 9_000_000_000)
                 if !hovering && items.count > 1 && model.player == nil { withAnimation(.easeInOut(duration: 0.6)) { index = (index + 1) % items.count } }
+            }
+        }
+    }
+
+    @ViewBuilder private func actions(_ item: MetaItem, _ addon: Addon) -> some View {
+        Button(action: { model.open(item, addonUrl: addon.manifestUrl) }) {
+            HStack(spacing: 8) { Image(systemName: "play.fill").scaledFont(size: 12); Text("Watch") }
+        }
+        .buttonStyle(PillButtonStyle())
+        RoundAction(icon: model.library.contains(item.type, item.id) ? "checkmark" : "plus", label: "My List", on: model.library.contains(item.type, item.id)) {
+            model.library.toggle(item, addonUrl: addon.manifestUrl)
+        }
+    }
+
+    private var dots: some View {
+        HStack(spacing: Hero.dotGap) {
+            ForEach(items.indices, id: \.self) { i in
+                Capsule().fill(i == index ? Color.white : Color.white.opacity(0.3)).frame(width: i == index ? 18 : 6, height: 6)
+                    .dotTarget()
+                    .onTapGesture { withAnimation(.easeInOut(duration: 0.4)) { index = i } }
             }
         }
     }
