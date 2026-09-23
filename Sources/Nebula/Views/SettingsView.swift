@@ -12,7 +12,7 @@ struct SettingsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 30) {
-                Text("Settings").font(.system(size: 30, weight: .bold)).foregroundStyle(Theme.ink).padding(.top, 56)
+                Text("Settings").scaledFont(size: 30, weight: .bold).foregroundStyle(Theme.ink).padding(.top, 56)
 
                 section("Profile") { ProfilePanel() }
 
@@ -135,15 +135,15 @@ struct ProfilePanel: View {
                 }
                 Text(mode == .signIn ? "Your add-ons, your place in everything and My List come with you."
                                      : "A handle and a password — no email. What is on this \(Platform.deviceWord) becomes the profile.")
-                    .font(.system(size: 12.5)).foregroundStyle(Theme.label2)
+                    .scaledFont(size: 12.5).foregroundStyle(Theme.label2)
                 field("@handle", text: $handle).entry(.handle)
                 if mode == .create { field("Name", text: $name) }
                 SecureField("Password", text: $password)
                     .entry(mode == .create ? .newPassword : .password)
-                    .textFieldStyle(.plain).font(.system(size: 14)).padding(.horizontal, 12).frame(height: 38)
+                    .textFieldStyle(.plain).scaledFont(size: 14).padding(.horizontal, 12).padding(.vertical, 8).frame(minHeight: 38)
                     .background(RoundedRectangle(cornerRadius: 9).fill(Theme.surface2))
                     .onSubmit(submit)
-                if let e = error { Text(e).font(.system(size: 12.5)).foregroundStyle(Theme.danger) }
+                if let e = error { Text(e).scaledFont(size: 12.5).foregroundStyle(Theme.danger) }
                 Button(action: submit) { if busy { ProgressView().controlSize(.small) } else { Text(mode == .signIn ? "Sign in" : "Create profile") } }
                     .buttonStyle(PillButtonStyle()).disabled(busy)
             }
@@ -153,7 +153,7 @@ struct ProfilePanel: View {
 
     private func field(_ placeholder: String, text: Binding<String>) -> some View {
         TextField(placeholder, text: text)
-            .textFieldStyle(.plain).font(.system(size: 14)).padding(.horizontal, 12).frame(height: 38)
+            .textFieldStyle(.plain).scaledFont(size: 14).padding(.horizontal, 12).padding(.vertical, 8).frame(minHeight: 38)
             .background(RoundedRectangle(cornerRadius: 9).fill(Theme.surface2))
             .onSubmit(submit)
     }
@@ -161,9 +161,9 @@ struct ProfilePanel: View {
     private func recoveryCard(_ key: String) -> some View {
         Panel {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Keep this recovery key").font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.ink)
-                Text("It is the only way back in if you forget the password, and it is shown once.").font(.system(size: 12.5)).foregroundStyle(Theme.label2)
-                Text(key).font(.system(size: 18, weight: .semibold, design: .monospaced)).foregroundStyle(Theme.ink).textSelection(.enabled)
+                Text("Keep this recovery key").scaledFont(size: 15, weight: .semibold).foregroundStyle(Theme.ink)
+                Text("It is the only way back in if you forget the password, and it is shown once.").scaledFont(size: 12.5).foregroundStyle(Theme.label2)
+                Text(key).scaledFont(size: 18, weight: .semibold, design: .monospaced).foregroundStyle(Theme.ink).textSelection(.enabled)
                     .padding(.horizontal, 14).padding(.vertical, 10).background(RoundedRectangle(cornerRadius: 9).fill(Theme.surface2))
                 HStack(spacing: 10) {
                     Button("Copy") { Platform.copy(key); model.say("Copied.") }
@@ -181,8 +181,8 @@ struct ProfilePanel: View {
                 Circle().fill(Color(hex: p.avatar)).frame(width: 44, height: 44)
                     .overlay(Text(String(p.name.prefix(1)).uppercased()).font(.system(size: 18, weight: .bold)).foregroundStyle(.white))
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(p.name).font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.ink)
-                    Text("@\(p.handle)").font(.system(size: 12, design: .monospaced)).foregroundStyle(Theme.label2)
+                    Text(p.name).scaledFont(size: 15, weight: .semibold).foregroundStyle(Theme.ink)
+                    Text("@\(p.handle)").scaledFont(size: 12, design: .monospaced).foregroundStyle(Theme.label2)
                 }
                 Spacer()
                 Button("Sign out") {
@@ -196,8 +196,8 @@ struct ProfilePanel: View {
                 HStack(spacing: 8) {
                     TextField("CODE", text: $tvCode)
                         .entry(.code)
-                        .textFieldStyle(.plain).font(.system(size: 14, weight: .semibold, design: .monospaced)).multilineTextAlignment(.center)
-                        .frame(width: 96, height: 34).background(RoundedRectangle(cornerRadius: 8).fill(Theme.surface2))
+                        .textFieldStyle(.plain).scaledFont(size: 14, weight: .semibold, design: .monospaced).multilineTextAlignment(.center)
+                        .padding(.vertical, 6).frame(width: 96).frame(minHeight: 34).background(RoundedRectangle(cornerRadius: 8).fill(Theme.surface2))
                         .onSubmit(approveTv)
                     Button("Approve", action: approveTv).buttonStyle(PillButtonStyle(filled: false))
                 }
@@ -209,12 +209,12 @@ struct ProfilePanel: View {
                     ForEach(devices) { d in
                         HStack(spacing: 10) {
                             Image(systemName: icon(d.plat)).foregroundStyle(Theme.label2).frame(width: 20)
-                            Text(d.name).font(.system(size: 13.5)).foregroundStyle(Theme.ink)
-                            if d.me { Text("THIS \(Platform.deviceWord.uppercased())").font(.system(size: 9.5, weight: .semibold, design: .monospaced)).tracking(1).foregroundStyle(model.accent) }
+                            Text(d.name).scaledFont(size: 13.5).foregroundStyle(Theme.ink)
+                            if d.me { Text("THIS \(Platform.deviceWord.uppercased())").scaledFont(size: 9.5, weight: .semibold, design: .monospaced).tracking(1).foregroundStyle(model.accent) }
                             Spacer()
                             if !d.me {
                                 Button("Sign out") { Task { if let e = await model.cloud.removeDevice(d.id) { model.say(e, error: true) }; await refresh() } }
-                                    .buttonStyle(.plain).font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.label2)
+                                    .buttonStyle(.plain).scaledFont(size: 12, weight: .medium).foregroundStyle(Theme.label2)
                             }
                         }
                         .padding(.horizontal, 16).padding(.vertical, 8)

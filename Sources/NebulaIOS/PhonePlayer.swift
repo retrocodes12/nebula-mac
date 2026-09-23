@@ -83,8 +83,7 @@ struct PhonePlayer: View {
         .onChange(of: mpv.timePos) { t in tick(t) }
         .onChange(of: mpv.ended) { e in if e { reachedEnd() } }
         .onChange(of: mpv.loaded) { l in if l { loadedNow() } }
-        .onChange(of: playing) { p in playingNow(p) }
-        .onChange(of: mpv.duration) { _ in nowPlaying.refresh() }
+        .onChange(of: wantsAwake) { awakeNow($0) }
         // the hide timer stands down while a sheet is up, so closing one has to re-arm it or the
         // chrome sits there for good
         .onChange(of: sheet) { s in if s == nil { wake() } }
@@ -104,14 +103,16 @@ struct PhonePlayer: View {
         }
     }
 
-    /// Playing, not paused, not at the end, not failed.
-    private var playing: Bool { mpv.loaded && !mpv.paused && !mpv.ended && mpv.failure == nil }
+    /// Playback is wanted: not paused, not at the end, not failed — playing, or still starting.
+    /// Protected streams took 15 to 25 s to open on the build machine, and a phone set to lock
+    /// after 30 s must not dim and lock in front of the spinner.
+    private var wantsAwake: Bool { !mpv.paused && !mpv.ended && mpv.failure == nil }
 
-    /// The screen stays awake while a picture moves, not while a paused or failed one sits
-    /// there. The model holds whose it is, so a player on its way out cannot clear its successor.
-    private func playingNow(_ p: Bool) {
-        if p { model.playingId = request.id } else if model.playingId == request.id { model.playingId = nil }
-        nowPlaying.refresh()
+    /// The screen stays awake while playback is wanted, not while a paused or failed picture
+    /// sits there. The model holds whose it is, so a player on its way out cannot clear its
+    /// successor's.
+    private func awakeNow(_ on: Bool) {
+        if on { model.playingId = request.id } else if model.playingId == request.id { model.playingId = nil }
     }
 
     // MARK: sound
@@ -150,8 +151,7 @@ struct PhonePlayer: View {
         Color.clear
             .contentShape(Rectangle())
             .onTapGesture(count: 2) {
-                guard !locked, !(mpv.isLive && !mpv.seekable) else { return }
-                if back && mpv.isLive { return }
+                guard !locked, back ? mpv.canStepBack : mpv.canStepForward else { return }
                 mpv.seek(by: back ? -step : step)
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 show(flash: (back ? "−" : "+") + "\(Int(step))s")
@@ -206,14 +206,14 @@ struct PhonePlayer: View {
 
             HStack(spacing: 40) {
                 GlassCircle(icon: "gobackward.\(stepIcon)", label: "Back \(model.prefs.seekStep) seconds", size: 52) { mpv.seek(by: -step); wake() }
-                    .opacity(mpv.isLive && !mpv.seekable ? 0.3 : 1)
+                    .opacity(mpv.canStepBack ? 1 : 0.3)
                 GlassCircle(icon: mpv.ended ? "arrow.counterclockwise" : mpv.paused ? "play.fill" : "pause.fill",
                             label: mpv.paused ? "Play" : "Pause", size: 76) {
                     if mpv.ended { mpv.seek(to: 0); mpv.setPaused(false) } else { mpv.togglePause() }
                     wake()
                 }
                 GlassCircle(icon: "goforward.\(stepIcon)", label: "Forward \(model.prefs.seekStep) seconds", size: 52) { mpv.seek(by: step); wake() }
-                    .opacity(mpv.isLive ? 0.3 : 1)
+                    .opacity(mpv.canStepForward ? 1 : 0.3)
             }
             .opacity(mpv.failure == nil ? 1 : 0)
             .allowsHitTesting(mpv.failure == nil)
@@ -352,6 +352,8 @@ struct PhonePlayer: View {
         let t = request.target
         nowPlaying.start(id: request.id, mpv: mpv, title: request.kicker ?? request.title, subtitle: request.kicker == nil ? nil : request.title,
                          step: step, art: t.episode?.thumbnail ?? t.item.background ?? t.item.poster)
+        // an onChange does not fire for the value a view starts with, and this one starts true
+        awakeNow(wantsAwake)
         let s = request.stream
         Task {
             let got = await PlaybackRules.source(for: s, maxHeight: model.prefs.maxHeight, stremio: model.stremio)
@@ -382,7 +384,6 @@ struct PhonePlayer: View {
     }
 
     private func tick(_ t: Double) {
-        nowPlaying.refresh()
         guard mpv.loaded, !mpv.isLive, mpv.duration > 0 else { return }
         if abs(t - lastSaved) >= 5 { lastSaved = t; save() }
         if model.prefs.autoplayNext, next != nil { nextOffered = mpv.duration - t <= 40 }
@@ -549,7 +550,7 @@ struct PlayerSheetView: View {
                             Spacer(minLength: 20)
                             Text(r.1).foregroundStyle(Theme.ink)
                         }
-                        .font(.system(size: 13, design: .monospaced))
+                        .scaledFont(size: 13, design: .monospaced)
                         .listRowBackground(Theme.surface)
                     }
                 }
@@ -576,9 +577,9 @@ struct PlayerSheetView: View {
     private func row(_ text: String, on: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack {
-                Text(text).font(.system(size: 15, weight: on ? .semibold : .regular)).foregroundStyle(Theme.ink)
+                Text(text).scaledFont(size: 15, weight: on ? .semibold : .regular).foregroundStyle(Theme.ink)
                 Spacer()
-                if on { Image(systemName: "checkmark").font(.system(size: 13, weight: .bold)) }
+                if on { Image(systemName: "checkmark").scaledFont(size: 13, weight: .bold) }
             }
             .contentShape(Rectangle())
         }
@@ -586,6 +587,6 @@ struct PlayerSheetView: View {
     }
 
     private func note(_ t: String) -> some View {
-        Text(t).font(.system(size: 13)).foregroundStyle(Theme.label2).listRowBackground(Theme.surface)
+        Text(t).scaledFont(size: 13).foregroundStyle(Theme.label2).listRowBackground(Theme.surface)
     }
 }

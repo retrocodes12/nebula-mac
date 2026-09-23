@@ -29,7 +29,9 @@ final class CatalogPager: ObservableObject {
         loading = true
         defer { if mine == seq { loading = false } }
         guard let page = try? await stremio.loadCatalog(base: addon.base, catalog: catalog, genre: genre, skip: fetched) else {
-            if mine == seq { failed = items.isEmpty; done = true }
+            // a request cancelled because the page asked again (Try again, another pick) did not
+            // fail: saying "did not answer" for it flashed the error before the new answer
+            if mine == seq && !Task.isCancelled { failed = items.isEmpty; done = true }
             return
         }
         guard mine == seq else { return }
@@ -52,15 +54,13 @@ struct CatalogView: View {
             VStack(alignment: .leading, spacing: 20) {
                 VStack(alignment: .leading, spacing: 6) {
                     Eyebrow("\(target.addon.name) · \(typeLabel(target.catalog.type))")
-                    Text(target.catalog.name).font(.system(size: 30, weight: .bold)).foregroundStyle(Theme.ink)
+                    Text(target.catalog.name).scaledFont(size: 30, weight: .bold).foregroundStyle(Theme.ink)
                 }
-                .padding(.top, 92)
+                .padding(.top, Theme.pushedTitleTop)
                 if !target.catalog.genres.isEmpty {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
-                            Chip(text: "All", on: genre == nil) { genre = nil }
-                            ForEach(target.catalog.genres, id: \.self) { g in Chip(text: g, on: genre == g) { genre = g } }
-                        }
+                    EdgeScroller {
+                        Chip(text: "All", on: genre == nil) { genre = nil }
+                        ForEach(target.catalog.genres, id: \.self) { g in Chip(text: g, on: genre == g) { genre = g } }
                     }
                 }
                 PosterGrid(items: pager.items, addonUrl: { _ in target.addon.manifestUrl }) {
@@ -76,7 +76,7 @@ struct CatalogView: View {
             .padding(.horizontal, Theme.pad).padding(.bottom, 50)
         }
         .background(Theme.bg)
-        .overlay(alignment: .topLeading) { BackButton().padding(.leading, 22).padding(.top, 44) }
+        .overlay(alignment: .topLeading) { BackButton().padding(.leading, 22).padding(.top, Theme.backTop(0)) }
         .task(id: genre) { await pager.reset(addon: target.addon, catalog: target.catalog, genre: genre, stremio: model.stremio) }
     }
 }
@@ -92,8 +92,8 @@ struct LibraryView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 HStack(alignment: .firstTextBaseline, spacing: 10) {
-                    Text("My List").font(.system(size: 30, weight: .bold)).foregroundStyle(Theme.ink)
-                    Text("\(all.count)").font(.system(size: 13, design: .monospaced)).foregroundStyle(Theme.label3)
+                    Text("My List").scaledFont(size: 30, weight: .bold).foregroundStyle(Theme.ink)
+                    Text("\(all.count)").scaledFont(size: 13, design: .monospaced).foregroundStyle(Theme.label3)
                 }
                 .padding(.top, 56)
                 if types.count > 1 {

@@ -21,8 +21,12 @@ struct PlayerScreen: View {
     @State private var nextBusy = false
     @State private var lastSaved: Double = -100
     @State private var cursorHidden = false
-    /// Held while a picture is moving, so the display does not dim and sleep under a film.
+    /// Held while playback is wanted, so the display does not dim and sleep under a film — or
+    /// in front of one that is still starting.
     @State private var awake: NSObjectProtocol?
+    /// The Now Playing card and the system's remote commands: the play/pause key, AirPods,
+    /// Control Center. Without it those went to Music, which started over the film.
+    @State private var nowPlaying = NowPlaying()
 
     enum PlayerMenu: String { case audio, subtitles, speed, info }
 
@@ -62,11 +66,11 @@ struct PlayerScreen: View {
         .onChange(of: mpv.ended) { e in if e { reachedEnd() } }
         .onChange(of: mpv.loaded) { l in if l { loadedNow() } }
         .onChange(of: mpv.volume) { v in model.prefs.volume = v }
-        .onChange(of: playing) { keepDisplayAwake($0) }
+        .onChange(of: wantsAwake) { keepDisplayAwake($0) }
     }
 
-    /// Playing, not paused, not at the end, not failed.
-    private var playing: Bool { mpv.loaded && !mpv.paused && !mpv.ended && mpv.failure == nil }
+    /// Playback is wanted: not paused, not at the end, not failed — playing, or still starting.
+    private var wantsAwake: Bool { !mpv.paused && !mpv.ended && mpv.failure == nil }
 
     private func keepDisplayAwake(_ on: Bool) {
         if on, awake == nil {
@@ -97,13 +101,13 @@ struct PlayerScreen: View {
 
             HStack(spacing: 34) {
                 GlassCircle(icon: "gobackward.\(stepIcon)", label: "Back \(model.prefs.seekStep) seconds", size: 52) { mpv.seek(by: -Double(model.prefs.seekStep)); wake() }
-                    .opacity(mpv.isLive && !mpv.seekable ? 0.3 : 1)
+                    .opacity(mpv.canStepBack ? 1 : 0.3)
                 GlassCircle(icon: mpv.ended ? "arrow.counterclockwise" : mpv.paused ? "play.fill" : "pause.fill", label: mpv.paused ? "Play" : "Pause", size: 72) {
                     if mpv.ended { mpv.seek(to: 0); mpv.setPaused(false) } else { mpv.togglePause() }
                     wake()
                 }
                 GlassCircle(icon: "goforward.\(stepIcon)", label: "Forward \(model.prefs.seekStep) seconds", size: 52) { mpv.seek(by: Double(model.prefs.seekStep)); wake() }
-                    .opacity(mpv.isLive ? 0.3 : 1)
+                    .opacity(mpv.canStepForward ? 1 : 0.3)
             }
             .opacity(mpv.failure == nil ? 1 : 0)
             .allowsHitTesting(mpv.failure == nil)          // drawn over the failure card's buttons
@@ -287,6 +291,11 @@ struct PlayerScreen: View {
 
     private func start() {
         mpv.setVolume(model.prefs.volume)
+        let t = request.target
+        nowPlaying.start(id: request.id, mpv: mpv, title: request.kicker ?? request.title, subtitle: request.kicker == nil ? nil : request.title,
+                         step: Double(model.prefs.seekStep), art: t.episode?.thumbnail ?? t.item.background ?? t.item.poster)
+        // an onChange does not fire for the value a view starts with, and this one starts true
+        keepDisplayAwake(wantsAwake)
         let s = request.stream
         Task {
             let got = await PlaybackRules.source(for: s, maxHeight: model.prefs.maxHeight, stremio: model.stremio)
@@ -379,6 +388,7 @@ struct PlayerScreen: View {
 
     private func finish() {
         save()
+        nowPlaying.finish()
         keepDisplayAwake(false)
         hideTask?.cancel()
         if let k = keyMonitor { NSEvent.removeMonitor(k); keyMonitor = nil }

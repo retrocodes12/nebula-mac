@@ -24,6 +24,8 @@ struct NebulaPhoneApp: App {
             case .active:
                 // what changed on the TV or the Mac while the phone was away (throttled in Cloud)
                 Task { await model.cloud.pullAll() }
+                // and add-ons that missed while it was away (a tunnel, a lift) are asked again
+                model.cameToFront()
             case .background:
                 Sync.flushInBackground(model.cloud)
             default:

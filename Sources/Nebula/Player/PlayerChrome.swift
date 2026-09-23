@@ -86,6 +86,14 @@ struct Scrubber: View {
             }
             .animation(.easeOut(duration: 0.12), value: held)
         }
-        .frame(height: 26)
+        .frame(height: Scrubber.band)
     }
+
+    /// The band a finger or the pointer grabs; the bar drawn in it stays 8 points. A phone needs
+    /// Apple's 44 to hit it at all; a pointer does with 26.
+    #if os(iOS)
+    static let band: CGFloat = 44
+    #else
+    static let band: CGFloat = 26
+    #endif
 }

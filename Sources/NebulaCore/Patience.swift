@@ -24,6 +24,12 @@ public enum Patience {
         timer?.cancel()
         return v
     }
+
+    /// How long an add-on that did not answer is passed by before it is asked again: two
+    /// minutes after one miss, doubling with each miss in a row, never more than sixteen.
+    public static func missWindow(_ misses: Int, first: TimeInterval = 120, atMost: TimeInterval = 960) -> TimeInterval {
+        min(atMost, first * pow(2, Double(max(0, min(misses, 10) - 1))))
+    }
 }
 
 /// A continuation that is resumed once, by whichever of several parties gets there first — and

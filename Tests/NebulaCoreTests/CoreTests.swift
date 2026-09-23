@@ -509,6 +509,29 @@ final class HostileDataTests: XCTestCase {
         p.note(bad)
         XCTAssertTrue(p.all().values.allSatisfy { $0.pos.isFinite && $0.dur.isFinite })
     }
+
+    /// An engine sample with no real position leaves the resume point alone. Read as 0 it was a
+    /// rewind to the top, which wrote a dismissed record — and that syncs to every device.
+    func testANonFiniteSampleIsSkippedNotReadAsARewind() {
+        let p = ProgressStore(store: tempStore())
+        var r = ProgressRec(type: "movie", id: "a"); r.name = "A"; r.pos = 600; r.dur = 3000
+        p.note(r)
+        var changes = 0
+        p.onChange = { changes += 1 }
+        for (pos, dur) in [(Double.nan, 3000.0), (.infinity, 3000.0), (600.0, .nan), (600.0, -.infinity), (2e7, 3000.0)] {
+            var s = r; s.pos = pos; s.dur = dur
+            p.note(s)
+        }
+        let kept = p.get("movie", "a")!
+        XCTAssertFalse(kept.dismissed, "no tombstone")
+        XCTAssertEqual(kept.pos, 600)
+        XCTAssertEqual(p.resumeAt("movie", "a"), 600)
+        XCTAssertEqual(changes, 0, "nothing written, nothing sent to the profile")
+        // a real rewind to the top still forgets the place
+        var top = r; top.pos = 2
+        p.note(top)
+        XCTAssertTrue(p.get("movie", "a")!.dismissed)
+    }
 }
 
 final class PatienceTests: XCTestCase {
@@ -550,6 +573,21 @@ final class PatienceTests: XCTestCase {
         XCTAssertNil(v)
         XCTAssertLessThan(Date().timeIntervalSince(start), 2.0)
         slow.cancel()
+    }
+}
+
+final class MissWindowTests: XCTestCase {
+    /// An add-on that did not answer is passed by for two minutes, doubling with each miss in a
+    /// row, and never for more than sixteen.
+    func testTheWindowDoublesAndStopsAtSixteenMinutes() {
+        XCTAssertEqual(Patience.missWindow(1), 120)
+        XCTAssertEqual(Patience.missWindow(2), 240)
+        XCTAssertEqual(Patience.missWindow(3), 480)
+        XCTAssertEqual(Patience.missWindow(4), 960)
+        XCTAssertEqual(Patience.missWindow(5), 960)
+        XCTAssertEqual(Patience.missWindow(1_000), 960, "a long run of misses neither overflows nor grows past the cap")
+        XCTAssertEqual(Patience.missWindow(0), 120, "a count that never happened still reads as one miss")
+        XCTAssertEqual(Patience.missWindow(-3), 120)
     }
 }
 

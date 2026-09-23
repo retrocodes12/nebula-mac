@@ -12,6 +12,14 @@ struct DetailView: View {
     @State private var loading = true
     @State private var season: Int?
     @State private var expanded = false
+    /// How far the art runs up under a phone's status bar (0 on a Mac).
+    @Environment(\.topBleed) private var bleed
+    /// The credits' label column, which widens with a larger text size on a phone.
+    #if os(iOS)
+    @ScaledMetric(relativeTo: .caption) private var labelColumn: CGFloat = 80
+    #else
+    private let labelColumn: CGFloat = 80
+    #endif
 
     private var isSeries: Bool { !(meta?.videos.isEmpty ?? true) }
     private var full: MetaItem {
@@ -37,11 +45,11 @@ struct DetailView: View {
                 VStack(alignment: .leading, spacing: 28) {
                     if let d = meta?.description ?? item.description {
                         VStack(alignment: .leading, spacing: 6) {
-                            Text(d).font(.system(size: 14.5)).foregroundStyle(Theme.ink.opacity(0.86)).lineSpacing(3)
+                            Text(d).scaledFont(size: 14.5).foregroundStyle(Theme.ink.opacity(0.86)).lineSpacing(3)
                                 .lineLimit(expanded ? nil : 4).fixedSize(horizontal: false, vertical: true).frame(maxWidth: Theme.cap(720), alignment: .leading)
                             if d.count > 320 {
                                 Button(expanded ? "Less" : "More") { expanded.toggle() }.buttonStyle(.plain)
-                                    .font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.label2)
+                                    .scaledFont(size: 13, weight: .semibold).foregroundStyle(Theme.label2)
                             }
                         }
                     }
@@ -53,7 +61,8 @@ struct DetailView: View {
             }
         }
         .background(Theme.bg)
-        .overlay(alignment: .topLeading) { BackButton().padding(.leading, 22).padding(.top, 44) }
+        .bleedsUnderStatusBar()
+        .overlay(alignment: .topLeading) { BackButton().padding(.leading, 22).padding(.top, Theme.backTop(bleed)) }
         .task {
             if let (m, a) = await model.loadMeta(item, addonUrl: addonUrl) {
                 meta = m; metaAddon = a
@@ -68,7 +77,7 @@ struct DetailView: View {
 
     private var header: some View {
         ZStack(alignment: .bottomLeading) {
-            Theme.backdrop(height: Theme.detailHeight) {
+            Theme.backdrop(height: Theme.detailHeight + bleed) {
                 RemoteImage(url: Art.backdrop(full)) { Theme.bg }
             }
             LinearGradient(stops: [.init(color: .clear, location: 0.3), .init(color: Theme.bg.opacity(0.88), location: 0.82), .init(color: Theme.bg, location: 1)], startPoint: .top, endPoint: .bottom)
@@ -78,12 +87,12 @@ struct DetailView: View {
                     Text(full.name).font(.system(size: 38, weight: .bold)).foregroundStyle(.white).lineLimit(2).frame(maxHeight: .infinity, alignment: .bottomLeading)
                 }
                 .frame(maxWidth: 380, maxHeight: 120, alignment: .bottomLeading)
-                Text(facts).font(.system(size: 12, weight: .medium, design: .monospaced)).foregroundStyle(.white.opacity(0.75))
+                Text(facts).scaledFont(size: 12, weight: .medium, design: .monospaced).foregroundStyle(.white.opacity(0.75))
                 actions
             }
             .padding(.horizontal, Theme.pad)
         }
-        .frame(height: Theme.detailHeight)
+        .frame(height: Theme.detailHeight + bleed)
     }
 
     private var facts: String {
@@ -92,13 +101,13 @@ struct DetailView: View {
         if let r = meta?.runtime ?? item.runtime { p.append(r) }
         if let y = meta?.releaseInfo ?? item.releaseInfo { p.append(y) }
         if let r = meta?.imdbRating ?? item.imdbRating { p.append("★ " + r) }
-        return p.joined(separator: "  ·  ")
+        return Fmt.facts(p)
     }
 
     private var actions: some View {
         HStack(spacing: 12) {
             Button(action: playMain) {
-                HStack(spacing: 8) { Image(systemName: "play.fill").font(.system(size: 12)); Text(playLabel) }
+                HStack(spacing: 8) { Image(systemName: "play.fill").scaledFont(size: 12); Text(playLabel) }
             }
             .buttonStyle(PillButtonStyle())
             .disabled(loading && meta == nil && item.type == "series")
@@ -152,8 +161,8 @@ struct DetailView: View {
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(rows, id: \.0) { r in
                     HStack(alignment: .firstTextBaseline, spacing: 14) {
-                        Text(r.0.uppercased()).font(.system(size: 10.5, weight: .medium, design: .monospaced)).tracking(1).foregroundStyle(Theme.label3).frame(width: 80, alignment: .leading)
-                        Text(r.1).font(.system(size: 13.5)).foregroundStyle(Theme.ink.opacity(0.85))
+                        Text(r.0.uppercased()).scaledFont(size: 10.5, weight: .medium, design: .monospaced).tracking(1).foregroundStyle(Theme.label3).frame(width: labelColumn, alignment: .leading)
+                        Text(r.1).scaledFont(size: 13.5).foregroundStyle(Theme.ink.opacity(0.85))
                     }
                 }
             }
@@ -170,14 +179,12 @@ struct DetailView: View {
         let upNextId = cursor?.upNext?.id
         VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .firstTextBaseline) {
-                Text("Episodes").font(.system(size: 19, weight: .semibold)).foregroundStyle(Theme.ink)
-                Text("\(list.count)").font(.system(size: 12, design: .monospaced)).foregroundStyle(Theme.label3)
+                Text("Episodes").scaledFont(size: 19, weight: .semibold).foregroundStyle(Theme.ink)
+                Text("\(list.count)").scaledFont(size: 12, design: .monospaced).foregroundStyle(Theme.label3)
             }
             if seasons.count > 1 {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(seasons, id: \.self) { s in Chip(text: s == 0 ? "Specials" : "Season \(s)", on: s == cur) { season = s } }
-                    }
+                EdgeScroller {
+                    ForEach(seasons, id: \.self) { s in Chip(text: s == 0 ? "Specials" : "Season \(s)", on: s == cur) { season = s } }
                 }
             }
             LazyVStack(spacing: 2) {
@@ -221,14 +228,14 @@ struct EpisodeRow: View {
 
                 VStack(alignment: .leading, spacing: 5) {
                     HStack(spacing: 8) {
-                        Text(ep.episode.map { "E\($0)" } ?? "•").font(.system(size: 11, weight: .semibold, design: .monospaced)).foregroundStyle(upNext ? model.accent : Theme.label3)
-                        if upNext { Text("UP NEXT").font(.system(size: 10, weight: .semibold, design: .monospaced)).tracking(1).foregroundStyle(model.accent) }
-                        if done { Image(systemName: "checkmark.circle.fill").font(.system(size: 12)).foregroundStyle(model.accent) }
+                        Text(ep.episode.map { "E\($0)" } ?? "•").scaledFont(size: 11, weight: .semibold, design: .monospaced).foregroundStyle(upNext ? model.accent : Theme.label3)
+                        if upNext { Text("UP NEXT").scaledFont(size: 10, weight: .semibold, design: .monospaced).tracking(1).foregroundStyle(model.accent) }
+                        if done { Image(systemName: "checkmark.circle.fill").scaledFont(size: 12).foregroundStyle(model.accent) }
                         Spacer()
-                        if let d = airDate { Text(d).font(.system(size: 11, design: .monospaced)).foregroundStyle(Theme.label3) }
+                        if let d = airDate { Text(d).scaledFont(size: 11, design: .monospaced).foregroundStyle(Theme.label3) }
                     }
-                    Text(ep.name).font(.system(size: 14.5, weight: .semibold)).foregroundStyle(Theme.ink).lineLimit(1)
-                    if let o = ep.overview { Text(o).font(.system(size: 12.5)).foregroundStyle(Theme.label2).lineLimit(2).lineSpacing(2) }
+                    Text(ep.name).scaledFont(size: 14.5, weight: .semibold).foregroundStyle(Theme.ink).lineLimit(1)
+                    if let o = ep.overview { Text(o).scaledFont(size: 12.5).foregroundStyle(Theme.label2).lineLimit(2).lineSpacing(2) }
                 }
                 .padding(.top, 4)
             }

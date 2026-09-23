@@ -1,4 +1,5 @@
 import SwiftUI
+import Network
 import NebulaCore
 
 enum Tab: String, CaseIterable, Identifiable {
@@ -64,10 +65,12 @@ struct PlayRequest: Identifiable, Equatable {
 }
 
 /// One step of asking every add-on at once, each on its own track: its manifest came in (nil:
-/// it did not answer), or one of its catalogs did (nil: that request failed).
+/// it did not answer), or one of its catalogs did (nil: that request failed) — or, for Home,
+/// the moment its first order has settled.
 enum AddonStep: Sendable {
     case manifest(Int, ManifestInfo?)
     case catalog(Int, Int, [MetaItem]?)
+    case settled
 }
 
 struct Toast: Equatable, Identifiable {
@@ -120,10 +123,15 @@ final class AppModel: ObservableObject {
     private var manifestLoads: [String: Task<ManifestInfo?, Never>] = [:]
     /// Add-ons whose manifest did not answer: when, and how many times running. Every page
     /// passes them by for a while instead of each waiting out the same timeout again — two
-    /// minutes, doubling with each miss in a row up to sixteen. Try again forgets them.
+    /// minutes, doubling with each miss in a row up to sixteen (`Patience.missWindow`). Try
+    /// again forgets them, and so does the connection coming back or the app coming to the
+    /// front — a phone off the network for a commute must not come back to add-ons skipped
+    /// for another quarter of an hour.
     private var manifestMisses: [String: (at: Date, count: Int)] = [:]
-    private static let missFor: TimeInterval = 120, missForAtMost: TimeInterval = 960
     private var toastTask: Task<Void, Never>?
+    /// The way out to the network: its coming back clears the misses.
+    private let network = NWPathMonitor()
+    private var online = true
 
     var accent: Color { Color(hex: accentHex) }
 
@@ -153,6 +161,11 @@ final class AppModel: ObservableObject {
         }
         addonsRef.onChange = { Task { await cloud.noteChanged("addons") } }
         guard live else { return }
+        network.pathUpdateHandler = { [weak self] p in
+            let up = p.status == .satisfied
+            Task { @MainActor in self?.connection(up) }
+        }
+        network.start(queue: DispatchQueue(label: "nebula.network", qos: .utility))
         Task {
             await cloud.setHandlers(
                 onApplied: { [weak self] keys in Task { @MainActor in self?.syncApplied(keys) } },
@@ -226,7 +239,7 @@ final class AppModel: ObservableObject {
     func manifest(for addon: Addon, within seconds: Double = .infinity) async -> ManifestInfo? {
         let u = addon.manifestUrl
         if let m = manifestCache[u] { return m }
-        if let miss = manifestMisses[u], Date().timeIntervalSince(miss.at) < AppModel.missWindow(miss.count) { return nil }
+        if let miss = manifestMisses[u], Date().timeIntervalSince(miss.at) < Patience.missWindow(miss.count) { return nil }
         let load: Task<ManifestInfo?, Never>
         if let out = manifestLoads[u] {
             load = out
@@ -248,10 +261,6 @@ final class AppModel: ObservableObject {
         else { manifestMisses[u] = (Date(), (manifestMisses[u]?.count ?? 0) + 1) }
     }
 
-    static func missWindow(_ misses: Int) -> TimeInterval {
-        min(missForAtMost, missFor * pow(2, Double(max(0, min(misses, 10) - 1))))
-    }
-
     /// Every add-on's manifest at once, in the add-ons' order; nil where one did not answer —
     /// or had not within `seconds`. An add-on asleep on a free host takes up to the whole 20 s
     /// timeout to answer, and every page used to wait for it before asking anyone for anything.
@@ -267,6 +276,23 @@ final class AppModel: ObservableObject {
 
     /// The viewer pressed Try again: ask the add-ons that missed straight away.
     func forgetMisses() { manifestMisses.removeAll() }
+
+    /// The connection came back, or moved (Wi-Fi to mobile): whatever missed may answer now.
+    /// Back from none at all, a Home that found nothing asks again by itself.
+    private func connection(_ up: Bool) {
+        let was = online
+        online = up
+        guard up else { return }
+        forgetMisses()
+        if !was && homeFailed { retryHome() }
+    }
+
+    /// The app came to the front (the phone's scene went active, the Mac's window did): a
+    /// laptop that woke before its Wi-Fi, or a phone back from a tunnel, starts clean.
+    func cameToFront() {
+        forgetMisses()
+        if homeFailed { retryHome() }
+    }
 
     var activeAddons: [Addon] { addons.filter(\.enabled) }
 
@@ -300,10 +326,16 @@ final class AppModel: ObservableObject {
     /// Home's Try again — and Discover's, which is built from the same catalogs.
     func retryHome() { forgetMisses(); catalogEpoch += 1; invalidateHome() }
 
-    /// Each add-on on its own track: the moment its manifest is in, its catalogs are asked, and
-    /// each row paints as it arrives, in the add-ons' order. Home used to wait for EVERY
-    /// manifest first, so one add-on asleep on a free host blanked it for the full timeout;
-    /// now that one's rows simply join when it wakes.
+    /// Each add-on on its own track: the moment its manifest is in, its catalogs are asked. Home
+    /// used to wait for EVERY manifest first, so one add-on asleep on a free host blanked it for
+    /// the full timeout; now that one's rows simply join when it wakes.
+    ///
+    /// What the viewer sees must hold still, though. The rows are laid out in the add-ons' order
+    /// once, when the first answers have settled (1.5 s, or sooner if everything is in), and from
+    /// then on a late add-on's rows go on the END — a row on screen never moves down or goes
+    /// away under the viewer, and the hero (the first row with art) stays what it was. Every
+    /// add-on shares one budget of 24 catalogs, spent in the order their manifests arrive: it
+    /// used to be 24 each, most of them fetched and thrown away, on mobile data.
     func loadHome() async {
         let active = activeAddons
         let sig = active.map(\.manifestUrl).joined(separator: "\n")
@@ -313,33 +345,60 @@ final class AppModel: ObservableObject {
         let seq = homeSeq
         homeLoading = true; homeFailed = false
         let stremio = stremio
-        let cap = 24                                            // catalogs on Home, at most
+        let budget = 24                                         // catalogs on Home, all add-ons together
         var catalogs = [[CatalogRef]](repeating: [], count: active.count)
         var rows = [[CatalogRow?]](repeating: [], count: active.count)
-        var misses = 0, asked = 0, painted = false
+        var misses = 0, asked = 0, answered = 0, out = 0
+        var settled = false, painted = false
+        var shown: [String] = []                                // row ids in the order they appear; only grows
         func paint() {
-            homeRows = Array(rows.joined().compactMap { $0 }.prefix(cap))
+            let ready = rows.joined().compactMap { $0 }        // the add-ons' order
+            if !painted {
+                // the first picture waits until the order has settled or everything is in —
+                // and, after that, until there is something to show
+                guard settled || out == 0 else { return }
+                guard !ready.isEmpty || out == 0 else { return }
+                shown = ready.map(\.id)
+            } else {
+                for r in ready where !shown.contains(r.id) { shown.append(r.id) }
+            }
+            let byId = Dictionary(ready.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+            homeRows = shown.compactMap { byId[$0] }
             painted = true
         }
         await withTaskGroup(of: AddonStep.self) { group in
-            for (i, a) in active.enumerated() { group.addTask { .manifest(i, await self.manifest(for: a)) } }
+            if !active.isEmpty {
+                group.addTask { try? await Task.sleep(nanoseconds: 1_500_000_000); return .settled }
+            }
+            for (i, a) in active.enumerated() {
+                out += 1
+                group.addTask { .manifest(i, await self.manifest(for: a)) }
+            }
             while let step = await group.next() {
                 guard seq == homeSeq else { group.cancelAll(); return }
                 switch step {
+                case .settled:
+                    settled = true
                 case .manifest(let i, let m):
-                    guard let m = m else { misses += 1; continue }
-                    let want = Array(m.catalogs.filter(\.browsable).prefix(cap))
+                    out -= 1
+                    guard let m = m else { misses += 1; break }
+                    let want = Array(m.catalogs.filter(\.browsable).prefix(max(0, budget - asked)))
                     catalogs[i] = want
                     rows[i] = Array(repeating: nil, count: want.count)
                     asked += want.count
+                    out += want.count
                     let base = active[i].base
                     for (j, c) in want.enumerated() {
                         group.addTask { .catalog(i, j, try? await stremio.loadCatalog(base: base, catalog: c)) }
                     }
                 case .catalog(let i, let j, let items):
+                    out -= 1
+                    answered += 1
                     if let items = items, !items.isEmpty { rows[i][j] = CatalogRow(addon: active[i], catalog: catalogs[i][j], items: Array(items.prefix(30))) }
-                    paint()
                 }
+                if answered > 0 || settled { paint() }
+                // everything is in: only the settling timer can be left, and it need not be waited out
+                if out == 0 { group.cancelAll() }
             }
         }
         guard seq == homeSeq else { return }

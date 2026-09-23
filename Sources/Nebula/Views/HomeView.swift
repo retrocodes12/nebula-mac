@@ -3,9 +3,18 @@ import NebulaCore
 
 struct HomeView: View {
     @EnvironmentObject var model: AppModel
+    @Environment(\.topBleed) private var bleed
+    /// The row the hero was first drawn from. It stays the hero while that row is on Home, so an
+    /// add-on answering late — or Home loading again with the same rows — never swaps the art
+    /// out from under the viewer.
+    @State private var heroRow: String?
+
+    private static func hasArt(_ r: CatalogRow) -> Bool { r.items.contains { Art.backdrop($0) != nil } }
 
     var heroItems: [(MetaItem, Addon)] {
-        guard let row = model.homeRows.first(where: { r in r.items.contains { Art.backdrop($0) != nil } }) else { return [] }
+        let rows = model.homeRows
+        let pinned = heroRow.flatMap { id in rows.first(where: { $0.id == id }) }
+        guard let row = pinned ?? rows.first(where: HomeView.hasArt) else { return [] }
         return row.items.filter { Art.backdrop($0) != nil }.prefix(6).map { ($0, row.addon) }
     }
 
@@ -13,7 +22,7 @@ struct HomeView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 34) {
                 if !heroItems.isEmpty { Hero(items: heroItems) }
-                else { Color.clear.frame(height: 40) }
+                else { Color.clear.frame(height: 40 + bleed) }
 
                 let cw = model.progress.continueList()
                 if !cw.isEmpty {
@@ -44,6 +53,11 @@ struct HomeView: View {
             }
         }
         .background(Theme.bg)
+        .bleedsUnderStatusBar()
+        .onChange(of: model.homeRows.map(\.id)) { ids in
+            if let h = heroRow, ids.contains(h) { return }
+            heroRow = model.homeRows.first(where: HomeView.hasArt)?.id
+        }
     }
 }
 
@@ -70,6 +84,7 @@ struct SkeletonRows: View {
 /// Full-bleed art that dissolves into the page, the title's own logo over it, one line of facts.
 struct Hero: View {
     @EnvironmentObject var model: AppModel
+    @Environment(\.topBleed) private var bleed
     let items: [(MetaItem, Addon)]
     @State private var index = 0
     @State private var hovering = false
@@ -78,7 +93,7 @@ struct Hero: View {
         let item = items[min(index, items.count - 1)].0
         let addon = items[min(index, items.count - 1)].1
         ZStack(alignment: .bottomLeading) {
-            Theme.backdrop(height: Theme.heroHeight) {
+            Theme.backdrop(height: Theme.heroHeight + bleed) {
                 RemoteImage(url: Art.backdrop(item)) { Theme.bg }
                     .id(item.id)
                     .transition(.opacity)
@@ -91,13 +106,13 @@ struct Hero: View {
                     Text(item.name).font(.system(size: 40, weight: .bold)).foregroundStyle(.white).lineLimit(2).frame(maxHeight: .infinity, alignment: .bottomLeading)
                 }
                 .frame(maxWidth: 360, maxHeight: 110, alignment: .bottomLeading)
-                Text(facts(item)).font(.system(size: 12, weight: .medium, design: .monospaced)).foregroundStyle(.white.opacity(0.75))
+                Text(facts(item)).scaledFont(size: 12, weight: .medium, design: .monospaced).foregroundStyle(.white.opacity(0.75))
                 if let d = item.description {
-                    Text(d).font(.system(size: 14)).foregroundStyle(.white.opacity(0.82)).lineLimit(3).fixedSize(horizontal: false, vertical: true).frame(maxWidth: Theme.cap(520), alignment: .leading)
+                    Text(d).scaledFont(size: 14).foregroundStyle(.white.opacity(0.82)).lineLimit(3).fixedSize(horizontal: false, vertical: true).frame(maxWidth: Theme.cap(520), alignment: .leading)
                 }
                 HStack(spacing: 12) {
                     Button(action: { model.open(item, addonUrl: addon.manifestUrl) }) {
-                        HStack(spacing: 8) { Image(systemName: "play.fill").font(.system(size: 12)); Text("Watch") }
+                        HStack(spacing: 8) { Image(systemName: "play.fill").scaledFont(size: 12); Text("Watch") }
                     }
                     .buttonStyle(PillButtonStyle())
                     RoundAction(icon: model.library.contains(item.type, item.id) ? "checkmark" : "plus", label: "My List", on: model.library.contains(item.type, item.id)) {
@@ -116,7 +131,7 @@ struct Hero: View {
             }
             .padding(.horizontal, Theme.pad).padding(.bottom, 8)
         }
-        .frame(height: Theme.heroHeight)
+        .frame(height: Theme.heroHeight + bleed)
         .onHover { hovering = $0 }
         .task(id: items.count) {
             // moves on by itself, and holds still while the pointer is over it
@@ -140,7 +155,7 @@ struct Hero: View {
         if let g = m.genres.first { p.append(g.uppercased()) }
         if let y = m.releaseInfo { p.append(y) }
         if let r = m.imdbRating { p.append("★ " + r) }
-        return p.joined(separator: "  ·  ")
+        return Fmt.facts(p)
     }
 }
 

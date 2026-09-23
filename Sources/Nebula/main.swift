@@ -61,10 +61,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
     /// Back at the front: what changed on the TV or the phone meanwhile comes in (Cloud keeps
-    /// this to one pull per 45 s).
+    /// this to one pull per 45 s), and add-ons that missed — a laptop that woke before its
+    /// Wi-Fi did — are asked again.
     func applicationDidBecomeActive(_ notification: Notification) {
-        guard let cloud = model?.cloud else { return }
+        guard let model = model else { return }
+        let cloud = model.cloud
         Task { await cloud.pullAll() }
+        Task { @MainActor in model.cameToFront() }
     }
 
     func applicationWillTerminate(_ notification: Notification) {

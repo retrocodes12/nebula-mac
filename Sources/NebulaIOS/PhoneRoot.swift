@@ -21,13 +21,20 @@ struct PhoneRoot: View {
             // once so a row keeps its place — stretched the whole stack and clipped every page,
             // the tab bar and the player (an overlay inherits the size) on both edges. An exact
             // frame reports its own size upwards, so no child can widen the stack any more.
+            //
+            // The status bar is measured here and handed down (`topBleed`): Home, a title page and
+            // a streams page run their art up under it, edge to edge like the system's own apps,
+            // so each page is clipped to its frame AND the strip above it — clipped to the frame
+            // alone, the art stopped at the status bar with a hard edge.
             GeometryReader { geo in
+                let top = PhoneRoot.statusBar(geo)
                 ZStack(alignment: .topLeading) {
                     ForEach(Tab.allCases) { t in
                         tabRoot(t)
                             .safeAreaInset(edge: .bottom) { Color.clear.frame(height: 68) }
+                            .environment(\.topBleed, top)
                             .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
-                            .clipped()
+                            .clipShape(UnderStatusBar(top: top))
                             .opacity(model.tab == t && !pushed ? 1 : 0)
                             .allowsHitTesting(model.tab == t && !pushed)
                     }
@@ -36,11 +43,24 @@ struct PhoneRoot: View {
                         // and by the page itself, so a new page in an old place starts fresh
                         page(route)
                             .id(route)
+                            .environment(\.topBleed, top)
                             .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
-                            .clipped()
+                            .clipShape(UnderStatusBar(top: top))
                             .background(Theme.bg)
                             .opacity(i == model.path.count - 1 ? 1 : 0)
                             .allowsHitTesting(i == model.path.count - 1)
+                    }
+                    // a soft shade under the status bar, so its clock reads over bright art and
+                    // over whatever scrolls up beneath it — no line where the art begins (none in
+                    // landscape, where a phone shows no status bar)
+                    if top > 0 {
+                        LinearGradient(stops: [.init(color: Theme.bg.opacity(0.72), location: 0),
+                                               .init(color: Theme.bg.opacity(0.38), location: 0.55),
+                                               .init(color: Theme.bg.opacity(0), location: 1)],
+                                       startPoint: .top, endPoint: .bottom)
+                            .frame(width: geo.size.width, height: top + 30)
+                            .offset(y: -top)
+                            .allowsHitTesting(false)
                     }
                 }
             }
@@ -65,6 +85,9 @@ struct PhoneRoot: View {
         .animation(.easeOut(duration: 0.18), value: pushed)
         .tint(model.accent)
         .preferredColorScheme(.dark)
+        // the pages' type follows the reader's text size (Theme's `scaledFont`) up to the second
+        // accessibility size; past it a title's art could no longer hold its own title
+        .dynamicTypeSize(...DynamicTypeSize.accessibility2)
         .task { await model.loadHome() }
         // ONE owner for the screen lock. Each player used to set it on appear and clear it on
         // disappear, and the old player fading out after the next episode's had appeared
@@ -100,11 +123,19 @@ struct PhoneRoot: View {
         }
     }
 
+    /// The status bar's height: the safe area above the pages (0 in landscape, where a phone
+    /// hides it). Read from the window when the layout reports none, as it can on a first pass.
+    @MainActor static func statusBar(_ geo: GeometryProxy) -> CGFloat {
+        if geo.safeAreaInsets.top > 0 { return geo.safeAreaInsets.top }
+        let window = UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.keyWindow }.first
+        return window?.safeAreaInsets.top ?? 0
+    }
+
     private func toast(_ t: Toast) -> some View {
         VStack {
             Spacer()
             Text(t.text)
-                .font(.system(size: 13, weight: .medium)).foregroundStyle(.white)
+                .scaledFont(size: 13, weight: .medium).foregroundStyle(.white)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 18).padding(.vertical, 10).frame(minHeight: 38)
                 .background(.ultraThinMaterial, in: Capsule())
@@ -158,4 +189,13 @@ struct TabPill: View {
 
     /// The sidebar can afford "My List"; five labels across a phone cannot.
     private func short(_ t: Tab) -> String { t == .library ? "List" : t.title }
+}
+
+/// A page's own frame and the strip above it, where the status bar sits: the art of a page that
+/// runs up under the status bar is drawn there, and nothing spills out sideways or below.
+struct UnderStatusBar: Shape {
+    var top: CGFloat
+    func path(in r: CGRect) -> Path {
+        Path(CGRect(x: r.minX, y: r.minY - top, width: r.width, height: r.height + top))
+    }
 }

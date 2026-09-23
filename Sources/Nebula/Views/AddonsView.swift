@@ -12,9 +12,9 @@ struct AddonsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Add-ons").font(.system(size: 30, weight: .bold)).foregroundStyle(Theme.ink)
+                    Text("Add-ons").scaledFont(size: 30, weight: .bold).foregroundStyle(Theme.ink)
                     Text("Add-ons bring the catalogs, the details, the streams and the subtitles. Nebula asks them in the order below.")
-                        .font(.system(size: 13)).foregroundStyle(Theme.label2).fixedSize(horizontal: false, vertical: true).frame(maxWidth: Theme.cap(560), alignment: .leading)
+                        .scaledFont(size: 13).foregroundStyle(Theme.label2).fixedSize(horizontal: false, vertical: true).frame(maxWidth: Theme.cap(560), alignment: .leading)
                 }
                 .padding(.top, 56)
 
@@ -22,15 +22,15 @@ struct AddonsView: View {
                     HStack(spacing: 10) {
                         TextField("Paste an add-on’s address or install link", text: $address)
                             .entry(.address)
-                            .textFieldStyle(.plain).font(.system(size: 14)).foregroundStyle(Theme.ink)
-                            .padding(.horizontal, 14).frame(height: 40)
+                            .textFieldStyle(.plain).scaledFont(size: 14).foregroundStyle(Theme.ink)
+                            .padding(.horizontal, 14).padding(.vertical, 8).frame(minHeight: 40)
                             .background(RoundedRectangle(cornerRadius: 10).fill(Theme.surface))
                             .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.line))
                             .onSubmit(install)
                         Button(action: install) { if busy { ProgressView().controlSize(.small) } else { Text("Add") } }
                             .buttonStyle(PillButtonStyle()).disabled(busy || address.trimmingCharacters(in: .whitespaces).isEmpty)
                     }
-                    if let e = error { Text(e).font(.system(size: 12.5)).foregroundStyle(Theme.danger) }
+                    if let e = error { Text(e).scaledFont(size: 12.5).foregroundStyle(Theme.danger) }
                 }
                 .frame(maxWidth: Theme.cap(720))
 
@@ -42,6 +42,8 @@ struct AddonsView: View {
                 }
                 .frame(maxWidth: Theme.cap(720))
             }
+            // the column starts at the page's margin like every other page's, not centred in a wide window
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, Theme.pad).padding(.bottom, 50)
         }
         .background(Theme.bg)
@@ -58,8 +60,8 @@ struct AddonsView: View {
             RemoteImage(url: a.logo, contentMode: .fit) { ZStack { Theme.surface2; Image(systemName: "puzzlepiece.extension").foregroundStyle(Theme.label3) } }
                 .frame(width: 38, height: 38).clipShape(RoundedRectangle(cornerRadius: 9))
             VStack(alignment: .leading, spacing: 3) {
-                Text(a.name).font(.system(size: 14, weight: .semibold)).foregroundStyle(a.enabled ? Theme.ink : Theme.label3)
-                Text(URL(string: a.base)?.host ?? a.base).font(.system(size: 11.5, design: .monospaced)).foregroundStyle(Theme.label3).lineLimit(1)
+                Text(a.name).scaledFont(size: 14, weight: .semibold).foregroundStyle(a.enabled ? Theme.ink : Theme.label3)
+                Text(URL(string: a.base)?.host ?? a.base).scaledFont(size: 11.5, design: .monospaced).foregroundStyle(Theme.label3).lineLimit(1)
             }
             Spacer()
             #if os(iOS)

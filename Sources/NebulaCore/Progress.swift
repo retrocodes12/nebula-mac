@@ -136,6 +136,9 @@ public final class ProgressStore: @unchecked Sendable {
 
     public func note(_ given: ProgressRec) {
         if given.id.isEmpty { return }
+        // a sample with no real position is not a sample: read as 0 it looked like a rewind to
+        // the top and wrote a dismissed record, which syncs and wipes the resume point everywhere
+        guard given.done || (given.pos.isFinite && given.dur.isFinite && given.pos < 10_000_000 && given.dur < 10_000_000) else { return }
         var rec = given
         rec.pos = ProgressRec.seconds(rec.pos); rec.dur = ProgressRec.seconds(rec.dur)
         let k = ProgressStore.key(rec.type, rec.id)

@@ -20,6 +20,12 @@ public struct URLSessionTransport: Transport {
     public init(timeout: TimeInterval = 20) {
         let c = URLSessionConfiguration.ephemeral
         c.timeoutIntervalForRequest = timeout
+        // the idle timeout alone let a host that trickles a byte now and then hold a request
+        // for days (the default here is seven): every page shares one manifest request per
+        // add-on, so that one held Home, Search and Streams with it. Everything sent through
+        // this is a short answer — add-on JSON, a manifest, a licence, the sync service;
+        // streams go to the engine and the manifest cache keeps its own session.
+        c.timeoutIntervalForResource = 45
         c.requestCachePolicy = .reloadIgnoringLocalCacheData
         session = URLSession(configuration: c)
     }

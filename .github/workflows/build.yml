@@ -156,10 +156,11 @@ jobs:
         with:
           name: Nebula-ios
           path: dist/Nebula.ipa
-      # Everything below runs on the simulator. It is the only place a phone build can be RUN
-      # here, so a failure is reported and not fatal — the .ipa above is already made.
+      # Everything below runs on the simulator, the only place a phone build can be RUN here.
+      # The build, the boot and the smokes are FATAL: they are all that stands between a crash in
+      # the lock-screen code, the player's life cycle or the audio hand-back and a green run.
+      # Only the screenshots may fail quietly.
       - name: Build for the simulator
-        continue-on-error: true
         id: simbuild
         run: |
           xcodebuild -project iOS/Nebula.xcodeproj -scheme NebulaPhone \
@@ -167,7 +168,6 @@ jobs:
             -derivedDataPath build-sim -skipPackagePluginValidation \
             CODE_SIGNING_ALLOWED=NO build > /tmp/xcb-sim.log 2>&1 || { grep -E "error:" /tmp/xcb-sim.log | head -30; tail -20 /tmp/xcb-sim.log; exit 1; }
       - name: Boot a phone
-        continue-on-error: true
         id: boot
         run: |
           UDID=$(xcrun simctl list devices available -j | python3 -c "
@@ -183,22 +183,29 @@ jobs:
           xcrun simctl bootstatus "$UDID" -b
           xcrun simctl install "$UDID" build-sim/Build/Products/Debug-iphonesimulator/Nebula.app
       - name: Smoke — the engine on a phone, no window
-        continue-on-error: true
         run: |
+          # each must print its one line AND say it played: no line (a crash, a hang) or any
+          # other verdict fails the run, after all three have had their go
           run() {
             echo "--- $1"
-            xcrun simctl launch --console-pty "$UDID" com.nebula.player.ios --args --smoke "$2" ${@:3} 2>&1 | grep -E '^\{' || echo "NO VERDICT"
+            out=$(xcrun simctl launch --console-pty "$UDID" com.nebula.player.ios --args --smoke "$2" "${@:3}" 2>&1 | grep -E '^\{' || true)
+            if [ -z "$out" ]; then echo "NO VERDICT: $1"; return 1; fi
+            echo "$out"
+            echo "$out" | grep -q '"verdict":"played"' || { echo "DID NOT PLAY: $1"; return 1; }
           }
-          run "a plain file over https" "https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4" --seconds 3
-          run "protected DASH, keys given" "https://storage.googleapis.com/shaka-demo-assets/angel-one-clearkey/dash.mpd" --keys abba271e8bcf552bbd2e86a434a9a5d9:69eaa802a6763af979e8d1940fb88392 --seconds 3
-          run "HLS" "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8" --seconds 3
+          failed=0
+          run "a plain file over https" "https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4" --seconds 3 || failed=1
+          run "protected DASH, keys given" "https://storage.googleapis.com/shaka-demo-assets/angel-one-clearkey/dash.mpd" --keys abba271e8bcf552bbd2e86a434a9a5d9:69eaa802a6763af979e8d1940fb88392 --seconds 3 || failed=1
+          run "HLS" "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8" --seconds 3 || failed=1
+          exit $failed
       - name: Screens
         continue-on-error: true
         run: |
           mkdir -p shots
+          # "${@:2}" quoted: bare, `--title "Test stream"` reached the app as two words
           shot() {
             xcrun simctl terminate "$UDID" com.nebula.player.ios 2>/dev/null || true
-            xcrun simctl launch "$UDID" com.nebula.player.ios --args ${@:2} >/dev/null
+            xcrun simctl launch "$UDID" com.nebula.player.ios --args "${@:2}" >/dev/null
             sleep "${SETTLE:-9}"
             xcrun simctl io "$UDID" screenshot "shots/$1.png"
           }
@@ -210,6 +217,11 @@ jobs:
           SETTLE=14 shot film --tab home --page film
           SETTLE=14 shot series --tab home --page series
           SETTLE=16 shot streams --tab home --page streams
+          # the reader's own larger text size (Dynamic Type), then back to the default
+          xcrun simctl ui "$UDID" content_size extra-extra-extra-large || true
+          SETTLE=14 shot series-larger-text --tab home --page series
+          SETTLE=12 shot home-larger-text --tab home
+          xcrun simctl ui "$UDID" content_size large || true
           SETTLE=16 shot player --play "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8" --title "Test stream"
           # again with the controls pinned up, so the chrome itself can be looked at
           export SIMCTL_CHILD_NEBULA_KEEP_CHROME=1

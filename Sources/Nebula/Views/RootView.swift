@@ -129,7 +129,9 @@ struct Sidebar: View {
                         .overlay(Text(String((model.profile?.name ?? "?").prefix(1)).uppercased()).font(.system(size: 12, weight: .bold)).foregroundStyle(.white))
                     VStack(alignment: .leading, spacing: 1) {
                         Text(model.profile?.name ?? "Sign in").font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Theme.ink).lineLimit(1)
-                        Text(model.profile.map { "@" + $0.handle } ?? "Sync with your TV and phone").font(.system(size: 10.5)).foregroundStyle(Theme.label3).lineLimit(1)
+                        // two lines when it needs them: one line cut it to "Sync with your TV an…"
+                        Text(model.profile.map { "@" + $0.handle } ?? "Sync with your TV and phone").font(.system(size: 10.5)).foregroundStyle(Theme.label3)
+                            .lineLimit(model.profile == nil ? 2 : 1).fixedSize(horizontal: false, vertical: true)
                     }
                     Spacer()
                 }

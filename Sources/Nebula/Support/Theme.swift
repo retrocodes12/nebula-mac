@@ -52,6 +52,85 @@ extension Theme {
         return points
         #endif
     }
+
+    /// Where a pushed page's Back button sits: just under a phone's status bar (`bleed` is how
+    /// far the page's own art runs up under it), and clear of a window's traffic lights.
+    static func backTop(_ bleed: CGFloat) -> CGFloat {
+        #if os(iOS)
+        return bleed + 6
+        #else
+        return 44
+        #endif
+    }
+
+    /// Where a pushed page with no art starts its title: below the Back button.
+    #if os(iOS)
+    static let pushedTitleTop: CGFloat = 58
+    #else
+    static let pushedTitleTop: CGFloat = 92
+    #endif
+}
+
+/// How far a page's title art runs up under a phone's status bar — the phone shell measures it
+/// and hands it down; everywhere else it is 0 and nothing moves.
+private struct TopBleedKey: EnvironmentKey { static let defaultValue: CGFloat = 0 }
+
+extension EnvironmentValues {
+    var topBleed: CGFloat {
+        get { self[TopBleedKey.self] }
+        set { self[TopBleedKey.self] = newValue }
+    }
+}
+
+/// The app's type. Sizes are the design's points; on a phone they grow and shrink with the
+/// reader's own text size (Dynamic Type), in step with body text. A Mac has no such setting and
+/// keeps exactly the sizes it was drawn at.
+struct ScaledFont: ViewModifier {
+    #if os(iOS)
+    @ScaledMetric private var size: CGFloat
+    #else
+    private let size: CGFloat
+    #endif
+    private let weight: Font.Weight
+    private let design: Font.Design
+
+    init(size: CGFloat, weight: Font.Weight, design: Font.Design) {
+        #if os(iOS)
+        _size = ScaledMetric(wrappedValue: size, relativeTo: .body)
+        #else
+        self.size = size
+        #endif
+        self.weight = weight
+        self.design = design
+    }
+
+    func body(content: Content) -> some View {
+        content.font(.system(size: size, weight: weight, design: design))
+    }
+}
+
+/// A row of chips or pills that scrolls sideways. It runs out to the page's edges instead of
+/// stopping at its margin — where a row cut off mid-word ("GENRE All g") looked broken — fades
+/// there, and still starts its first chip on the margin. Used inside a column padded by
+/// `Theme.pad`, which it reaches back out through.
+struct EdgeScroller<Content: View>: View {
+    var spacing: CGFloat = 8
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: spacing) { content }
+                .padding(.horizontal, Theme.pad)
+        }
+        .mask {
+            HStack(spacing: 0) {
+                LinearGradient(colors: [.clear, .black], startPoint: .leading, endPoint: .trailing).frame(width: Theme.pad * 0.75)
+                Rectangle()
+                LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing).frame(width: Theme.pad)
+            }
+        }
+        .padding(.horizontal, -Theme.pad)
+    }
 }
 
 extension Color {
@@ -71,6 +150,21 @@ extension Color {
 }
 
 extension View {
+    /// The system face at `size` points, scaled with the reader's text size on a phone.
+    func scaledFont(size: CGFloat, weight: Font.Weight = .regular, design: Font.Design = .default) -> some View {
+        modifier(ScaledFont(size: size, weight: weight, design: design))
+    }
+
+    /// A page whose title art runs edge to edge up under a phone's status bar, the way the
+    /// system's own apps draw theirs. Nothing on a Mac, whose window already starts at the top.
+    @ViewBuilder func bleedsUnderStatusBar() -> some View {
+        #if os(iOS)
+        self.ignoresSafeArea(edges: .top)
+        #else
+        self
+        #endif
+    }
+
     /// On a phone, at least `side` points to touch (Apple's minimum is 44), whatever size the
     /// control is drawn at. A window's pointer needs no help.
     @ViewBuilder func touchArea(_ side: CGFloat = 44) -> some View {
@@ -107,7 +201,7 @@ struct Eyebrow: View {
     init(_ text: String) { self.text = text }
     var body: some View {
         Text(text.uppercased())
-            .font(.system(size: 11, weight: .medium, design: .monospaced))
+            .scaledFont(size: 11, weight: .medium, design: .monospaced)
             .tracking(1.2)
             .foregroundStyle(Theme.label2)
     }
@@ -131,14 +225,15 @@ struct PillButtonStyle: ButtonStyle {
         var body: some View {
             let accent = model.accent
             configuration.label
-                .font(.system(size: 14, weight: .semibold))
+                .scaledFont(size: 14, weight: .semibold)
                 .padding(.horizontal, 22)
-                .frame(height: 40)
+                .padding(.vertical, 8).frame(minHeight: 40)     // grows with a larger text size
                 .foregroundStyle(filled ? accent.readableInk : Theme.ink)
                 .background(Capsule().fill(filled ? accent : Theme.surface2))
                 .overlay(Capsule().strokeBorder(filled ? Color.clear : Theme.line))
                 .opacity(!enabled ? 0.4 : configuration.isPressed ? 0.75 : 1)
                 .contentShape(Capsule())
+                .touchArea()
         }
     }
 }
@@ -159,6 +254,7 @@ struct RoundAction: View {
                 .background(Circle().fill(on ? Theme.ink : Theme.surface2))
                 .overlay(Circle().strokeBorder(Theme.line))
                 .contentShape(Circle())
+                .touchArea()                                    // drawn at 40, touched at 44
         }
         .buttonStyle(.plain)
         .help(label)
@@ -175,10 +271,10 @@ struct Chip: View {
     var body: some View {
         Button(action: action) {
             Text(text)
-                .font(.system(size: 13, weight: .medium))
+                .scaledFont(size: 13, weight: .medium)
                 .lineLimit(1)
                 .padding(.horizontal, 14)
-                .frame(height: 30)
+                .padding(.vertical, 6).frame(minHeight: 30)
                 .foregroundStyle(on ? Color.black : Theme.ink)
                 .background(Capsule().fill(on ? Theme.ink : Theme.surface))
                 .overlay(Capsule().strokeBorder(on ? Color.clear : Theme.line))
@@ -206,8 +302,8 @@ struct PanelRow<Trailing: View>: View {
     var body: some View {
         HStack(spacing: 16) {
             VStack(alignment: .leading, spacing: 3) {
-                Text(title).font(.system(size: 14, weight: .medium)).foregroundStyle(Theme.ink)
-                if let d = detail { Text(d).font(.system(size: 12)).foregroundStyle(Theme.label2).fixedSize(horizontal: false, vertical: true) }
+                Text(title).scaledFont(size: 14, weight: .medium).foregroundStyle(Theme.ink)
+                if let d = detail { Text(d).scaledFont(size: 12).foregroundStyle(Theme.label2).fixedSize(horizontal: false, vertical: true) }
             }
             Spacer(minLength: 12)
             trailing
@@ -230,9 +326,9 @@ struct EmptyState: View {
 
     var body: some View {
         VStack(spacing: 10) {
-            Image(systemName: icon).font(.system(size: 30, weight: .light)).foregroundStyle(Theme.label3)
-            Text(title).font(.system(size: 17, weight: .semibold)).foregroundStyle(Theme.ink)
-            Text(detail).font(.system(size: 13)).foregroundStyle(Theme.label2).multilineTextAlignment(.center)
+            Image(systemName: icon).scaledFont(size: 30, weight: .light).foregroundStyle(Theme.label3)
+            Text(title).scaledFont(size: 17, weight: .semibold).foregroundStyle(Theme.ink)
+            Text(detail).scaledFont(size: 13).foregroundStyle(Theme.label2).multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true).frame(maxWidth: 380)
             if let t = actionTitle, let a = action {
                 Button(t, action: a).buttonStyle(PillButtonStyle(filled: false)).padding(.top, 8)
@@ -249,6 +345,13 @@ enum Fmt {
         let t = Int(secs.rounded(.down))
         let h = t / 3600, m = (t % 3600) / 60, s = t % 60
         return h > 0 ? String(format: "%d:%02d:%02d", h, m, s) : String(format: "%d:%02d", m, s)
+    }
+
+    /// The facts line under a title ("SERIES · DRAMA · 52 min · 2022– · ★ 7.7"). A narrow page
+    /// wraps it, but only between facts: inside one ("52 min", "★ 7.7") the spaces do not break,
+    /// and the dot stays with the fact before it.
+    static func facts(_ parts: [String]) -> String {
+        parts.map { $0.replacingOccurrences(of: " ", with: "\u{00A0}") }.joined(separator: "\u{00A0}\u{00A0}·  ")
     }
 
     /// "1 h 12 min left", "12 min left".

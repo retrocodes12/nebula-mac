@@ -21,14 +21,14 @@ struct SearchView: View {
                 HStack(spacing: 10) {
                     Image(systemName: "magnifyingglass").foregroundStyle(Theme.label2)
                     TextField("Films, series, channels", text: $query)
-                        .textFieldStyle(.plain).font(.system(size: 16)).foregroundStyle(Theme.ink)
+                        .textFieldStyle(.plain).scaledFont(size: 16).foregroundStyle(Theme.ink)
                         .focused($focused)
                         .onSubmit { run(query) }
                     if !query.isEmpty {
                         Button(action: { query = ""; submitted = ""; results = [] }) { Image(systemName: "xmark.circle.fill").foregroundStyle(Theme.label3) }.buttonStyle(.plain)
                     }
                 }
-                .padding(.horizontal, 16).frame(height: 46)
+                .padding(.horizontal, 16).padding(.vertical, 10).frame(minHeight: 46)
                 .background(RoundedRectangle(cornerRadius: 12).fill(Theme.surface))
                 .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(focused ? Color.white.opacity(0.5) : Theme.line))
                 .frame(maxWidth: Theme.cap(640))
@@ -47,7 +47,7 @@ struct SearchView: View {
                     DiscoverSection().padding(.horizontal, Theme.pad)
                 } else {
                     if searching && results.isEmpty {
-                        HStack(spacing: 10) { ProgressView().controlSize(.small); Text("Searching your add-ons…").font(.system(size: 13)).foregroundStyle(Theme.label2) }.padding(.horizontal, Theme.pad)
+                        HStack(spacing: 10) { ProgressView().controlSize(.small); Text("Searching your add-ons…").scaledFont(size: 13).foregroundStyle(Theme.label2) }.padding(.horizontal, Theme.pad)
                     }
                     ForEach(results) { CatalogRowResults(row: $0) }
                     if !searching && results.isEmpty {
@@ -88,6 +88,8 @@ struct SearchView: View {
                 while let step = await group.next() {
                     guard mine == seq else { group.cancelAll(); return }
                     switch step {
+                    case .settled:
+                        continue                              // Home's; a search paints as it goes
                     case .manifest(let i, let info):
                         guard let info = info else { misses += 1; continue }
                         let want = info.catalogs.filter(\.search)
@@ -152,24 +154,24 @@ struct DiscoverSection: View {
             Eyebrow("Discover")
             if let cur = current {
                 // scrolls sideways like every other chip row: three pills that do not shrink are
-                // ~440 points, and laid out bare they made the whole page that wide on a phone
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 10) {
-                        PickMenu(label: "Type", value: typeLabel(cur.catalog.type), options: types.map { ($0, typeLabel($0)) }, current: cur.catalog.type) { t in
-                            if let first = options.first(where: { $0.catalog.type == t }) { pick(first, genre: nil) }
-                        }
-                        PickMenu(label: "Catalog", value: cur.catalog.name,
-                                 options: options.filter { $0.catalog.type == cur.catalog.type }.map { (key($0), "\($0.catalog.name) — \($0.addon.name)") }, current: key(cur)) { k in
-                            if let t = options.first(where: { key($0) == k }) { pick(t, genre: nil) }
-                        }
-                        if !cur.catalog.genres.isEmpty {
-                            PickMenu(label: "Genre", value: genre ?? "All genres", options: [("", "All genres")] + cur.catalog.genres.map { ($0, $0) }, current: genre ?? "") { g in
-                                pick(cur, genre: g.isEmpty ? nil : g)
-                            }
+                // ~440 points, and laid out bare they made the whole page that wide on a phone.
+                // Out to the page's edges, so a pill that does not fit fades there instead of
+                // being cut at the margin ("GENRE All g")
+                EdgeScroller(spacing: 10) {
+                    PickMenu(label: "Type", value: typeLabel(cur.catalog.type), options: types.map { ($0, typeLabel($0)) }, current: cur.catalog.type) { t in
+                        if let first = options.first(where: { $0.catalog.type == t }) { pick(first, genre: nil) }
+                    }
+                    PickMenu(label: "Catalog", value: cur.catalog.name,
+                             options: options.filter { $0.catalog.type == cur.catalog.type }.map { (key($0), "\($0.catalog.name) — \($0.addon.name)") }, current: key(cur)) { k in
+                        if let t = options.first(where: { key($0) == k }) { pick(t, genre: nil) }
+                    }
+                    if !cur.catalog.genres.isEmpty {
+                        PickMenu(label: "Genre", value: genre ?? "All genres", options: [("", "All genres")] + cur.catalog.genres.map { ($0, $0) }, current: genre ?? "") { g in
+                            pick(cur, genre: g.isEmpty ? nil : g)
                         }
                     }
                 }
-                Text("\(cur.addon.name) • \(typeLabel(cur.catalog.type))").font(.system(size: 12)).foregroundStyle(Theme.label3)
+                Text("\(cur.addon.name) • \(typeLabel(cur.catalog.type))").scaledFont(size: 12).foregroundStyle(Theme.label3)
                 PosterGrid(items: pager.items, addonUrl: { _ in cur.addon.manifestUrl }) {
                     Task { await pager.more(addon: cur.addon, catalog: cur.catalog, genre: genre, stremio: model.stremio) }
                 }
@@ -264,11 +266,11 @@ struct PickMenu: View {
     var body: some View {
         Button(action: { open.toggle() }) {
             HStack(spacing: 8) {
-                Text(label.uppercased()).font(.system(size: 10, weight: .medium, design: .monospaced)).tracking(1).foregroundStyle(Theme.label3)
-                Text(value).font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.ink).lineLimit(1).frame(maxWidth: 220)
-                Image(systemName: "chevron.down").font(.system(size: 9, weight: .bold)).foregroundStyle(Theme.label3)
+                Text(label.uppercased()).scaledFont(size: 10, weight: .medium, design: .monospaced).tracking(1).foregroundStyle(Theme.label3)
+                Text(value).scaledFont(size: 13, weight: .semibold).foregroundStyle(Theme.ink).lineLimit(1).frame(maxWidth: 220)
+                Image(systemName: "chevron.down").scaledFont(size: 9, weight: .bold).foregroundStyle(Theme.label3)
             }
-            .padding(.horizontal, 14).frame(height: 34)
+            .padding(.horizontal, 14).padding(.vertical, 6).frame(minHeight: 34)
             .background(Capsule().fill(open ? Theme.surface2 : Theme.surface))
             .overlay(Capsule().strokeBorder(Theme.line))
             .contentShape(Capsule())
@@ -300,12 +302,12 @@ struct PickRow: View {
     var body: some View {
         Button(action: action) {
             HStack {
-                Text(text).font(.system(size: 13, weight: on ? .semibold : .regular)).lineLimit(1)
+                Text(text).scaledFont(size: 13, weight: on ? .semibold : .regular).lineLimit(1)
                 Spacer()
-                if on { Image(systemName: "checkmark").font(.system(size: 11, weight: .bold)) }
+                if on { Image(systemName: "checkmark").scaledFont(size: 11, weight: .bold) }
             }
             .foregroundStyle(Theme.ink)
-            .padding(.horizontal, 10).frame(height: 30)
+            .padding(.horizontal, 10).padding(.vertical, 6).frame(minHeight: 30)
             .background(RoundedRectangle(cornerRadius: 7).fill(hover ? Theme.surface2 : Color.clear))
             .contentShape(Rectangle())
         }

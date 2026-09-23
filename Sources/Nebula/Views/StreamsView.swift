@@ -11,12 +11,17 @@ struct StreamsView: View {
     @State private var unreachable = 0
     @State private var filter: String?
     @State private var fresh = false
+    /// How far the art runs up under a phone's status bar (0 on a Mac).
+    @Environment(\.topBleed) private var bleed
     /// The series lookup for a page opened from Continue watching, which runs beside the streams.
     @State private var hydration: Task<Void, Never>?
-    /// The row whose tap is waiting for that lookup.
+    /// The row whose tap is waiting for that lookup, and the wait itself.
     @State private var waiting: String?
+    @State private var waitTask: Task<Void, Never>?
+    /// The page as it was pushed — what the model's stack holds for it (`target` fills in).
+    private let opened: StreamsTarget
 
-    init(target: StreamsTarget) { _target = State(initialValue: target) }
+    init(target: StreamsTarget) { _target = State(initialValue: target); opened = target }
 
     private var resumeAt: Double { model.progress.resumeAt(target.type, target.id) }
     private var total: Int { sections.reduce(0) { $0 + $1.streams.count } }
@@ -26,34 +31,36 @@ struct StreamsView: View {
             VStack(alignment: .leading, spacing: 0) {
                 header
                 VStack(alignment: .leading, spacing: 26) {
+                    // some add-ons answered and some did not: the list is not the whole story
+                    if !loading && !sections.isEmpty && unreachable > 0 { partialNote }
                     if sections.count > 1 {
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 8) {
-                                Chip(text: "All · \(total)", on: filter == nil) { filter = nil }
-                                ForEach(sections) { s in Chip(text: "\(s.addon.name) · \(s.streams.count)", on: filter == s.id) { filter = s.id } }
-                            }
+                        EdgeScroller {
+                            Chip(text: "All · \(total)", on: filter == nil) { filter = nil }
+                            ForEach(sections) { s in Chip(text: "\(s.addon.name) · \(s.streams.count)", on: filter == s.id) { filter = s.id } }
                         }
                     }
                     ForEach(order(sections).filter { filter == nil || filter == $0.id }) { s in
+                        // rows line their names up behind a plate when any row in the section has one
+                        let plates = s.streams.contains { StreamBadges.plate($0.name + "\n" + $0.title + "\n" + $0.fileName) != nil }
                         VStack(alignment: .leading, spacing: 10) {
                             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                                Text(s.addon.name).font(.system(size: 16, weight: .semibold)).foregroundStyle(Theme.ink)
-                                Text("\(s.streams.count)").font(.system(size: 12, design: .monospaced)).foregroundStyle(Theme.label3)
+                                Text(s.addon.name).scaledFont(size: 16, weight: .semibold).foregroundStyle(Theme.ink)
+                                Text("\(s.streams.count)").scaledFont(size: 12, design: .monospaced).foregroundStyle(Theme.label3)
                             }
                             VStack(spacing: 6) {
                                 ForEach(Array(s.streams.enumerated()), id: \.offset) { i, st in
                                     let key = s.id + "#\(i)"
-                                    StreamRow(stream: st, addonName: s.addon.name, busy: waiting == key) { play(st, from: s.addon, key: key) }
+                                    StreamRow(stream: st, addonName: s.addon.name, plateSlot: plates, busy: waiting == key) { play(st, from: s.addon, key: key) }
                                 }
                             }
                         }
                     }
                     if loading {
-                        HStack(spacing: 10) { ProgressView().controlSize(.small); Text("Asking your add-ons…").font(.system(size: 13)).foregroundStyle(Theme.label2) }
+                        HStack(spacing: 10) { ProgressView().controlSize(.small); Text("Asking your add-ons…").scaledFont(size: 13).foregroundStyle(Theme.label2) }
                     } else if sections.isEmpty {
                         if unreachable > 0 {
                             EmptyState(icon: "wifi.slash", title: "No streams for this", detail: unreachableLine,
-                                       actionTitle: "Try again", action: { model.forgetMisses(); Task { await load() } })
+                                       actionTitle: "Try again", action: retry)
                         } else {
                             EmptyState(icon: "play.slash", title: "No streams for this",
                                        detail: answered == 0 ? "None of your add-ons offers streams for this kind of title. Add one that does in Add-ons."
@@ -65,7 +72,12 @@ struct StreamsView: View {
             }
         }
         .background(Theme.bg)
-        .overlay(alignment: .topLeading) { BackButton().padding(.leading, 22).padding(.top, 44) }
+        .bleedsUnderStatusBar()
+        .overlay(alignment: .topLeading) { BackButton().padding(.leading, 22).padding(.top, Theme.backTop(bleed)) }
+        .onDisappear {
+            // Back while a tap waited for the series: that tap is void
+            waitTask?.cancel(); waitTask = nil; waiting = nil
+        }
         .task {
             // the series is looked up beside the streams, not before them
             let h = Task { await hydrate() }
@@ -87,18 +99,42 @@ struct StreamsView: View {
             return
         }
         waiting = key
-        Task {
+        let here = Route.streams(opened)
+        waitTask = Task {
             _ = await Patience.value(of: h, within: 3)
-            waiting = nil
+            if waiting == key { waiting = nil }
+            // the viewer went Back, or on to another page, while it waited: not theirs to play now
+            guard !Task.isCancelled, model.path.last == here, model.player == nil else { return }
             model.play(st, target: target, from: addon, fresh: fresh)
         }
     }
 
+    /// Asks every add-on again. What came back before stays on screen while it does, and a
+    /// section that answers again replaces its old self.
     private func load() async {
-        sections = []; loading = true
-        let r = await model.loadStreams(target) { s in sections.append(s) }
+        loading = true
+        let r = await model.loadStreams(target) { s in
+            if let i = sections.firstIndex(where: { $0.id == s.id }) { sections[i] = s } else { sections.append(s) }
+        }
         answered = r.answered; unreachable = r.unreachable
         loading = false
+    }
+
+    private func retry() {
+        model.forgetMisses()
+        Task { await load() }
+    }
+
+    /// One quiet line over the list: how many add-ons did not answer, and the way to ask again.
+    private var partialNote: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "wifi.slash").scaledFont(size: 12).foregroundStyle(Theme.label3)
+            Text("\(unreachable) add-on\(unreachable == 1 ? "" : "s") did not answer").scaledFont(size: 13).foregroundStyle(Theme.label2)
+            Text("·").scaledFont(size: 13).foregroundStyle(Theme.label3)
+            Button("Try again", action: retry)
+                .buttonStyle(.plain).scaledFont(size: 13, weight: .semibold).foregroundStyle(Theme.ink)
+                .touchArea()
+        }
     }
 
     private var unreachableLine: String {
@@ -109,15 +145,15 @@ struct StreamsView: View {
 
     private var header: some View {
         ZStack(alignment: .bottomLeading) {
-            Theme.backdrop(height: 300) {
+            Theme.backdrop(height: 300 + bleed) {
                 RemoteImage(url: target.episode?.thumbnail ?? Art.backdrop(target.item)) { Theme.bg }
             }
             .opacity(0.55)
             LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: Theme.bg, location: 1)], startPoint: .top, endPoint: .bottom)
             VStack(alignment: .leading, spacing: 8) {
                 if let k = Ids.episodeKicker(target.id) { Eyebrow(k) }
-                Text(target.episode?.name ?? target.item.name).font(.system(size: 30, weight: .bold)).foregroundStyle(.white).lineLimit(2)
-                if target.episode != nil { Text(target.item.name).font(.system(size: 14)).foregroundStyle(Theme.label2) }
+                Text(target.episode?.name ?? target.item.name).scaledFont(size: 30, weight: .bold).foregroundStyle(.white).lineLimit(2)
+                if target.episode != nil { Text(target.item.name).scaledFont(size: 14).foregroundStyle(Theme.label2) }
                 if resumeAt > 0 {
                     HStack(spacing: 8) {
                         Chip(text: "Resume from \(Fmt.clock(resumeAt))", on: !fresh) { fresh = false }
@@ -128,7 +164,7 @@ struct StreamsView: View {
             }
             .padding(.horizontal, Theme.pad).padding(.bottom, 18)
         }
-        .frame(height: 300)
+        .frame(height: 300 + bleed)
     }
 
     /// The add-on the title came from leads; the rest keep the viewer's own ranking.
@@ -158,6 +194,8 @@ struct StreamsView: View {
 struct StreamRow: View {
     let stream: StreamItem
     let addonName: String
+    /// Keep the plate's column when this row has none, so the names down a section line up.
+    var plateSlot = true
     /// Tapped, and waiting for something before it can play.
     var busy = false
     let action: () -> Void
@@ -174,24 +212,30 @@ struct StreamRow: View {
         let desc = StreamBadges.cleanDesc(facts.desc)
         Button(action: action) {
             HStack(spacing: 16) {
-                VStack(spacing: 1) {
-                    Text(plate?.res ?? "—").font(.system(size: 17, weight: .bold, design: .monospaced)).foregroundStyle(Theme.ink)
-                    if let t = plate?.tag, !t.isEmpty { Text(t).font(.system(size: 8, weight: .semibold, design: .monospaced)).tracking(0.8).foregroundStyle(Theme.label3) }
+                // the plate says what the resolution is; with none known there is no plate — a
+                // box holding a dash said nothing and looked like a broken badge
+                if let p = plate {
+                    VStack(spacing: 1) {
+                        Text(p.res).font(.system(size: 17, weight: .bold, design: .monospaced)).foregroundStyle(Theme.ink)
+                        if !p.tag.isEmpty { Text(p.tag).font(.system(size: 8, weight: .semibold, design: .monospaced)).tracking(0.8).foregroundStyle(Theme.label3) }
+                    }
+                    .frame(width: 64, height: 48)
+                    .background(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.line))
+                } else if plateSlot {
+                    Color.clear.frame(width: 64, height: 48)
                 }
-                .frame(width: 64, height: 48)
-                .background(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.line))
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(name.isEmpty ? (desc.isEmpty ? "Stream" : desc) : name).font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.ink).lineLimit(1)
-                    if !name.isEmpty && !desc.isEmpty { Text(desc).font(.system(size: 12)).foregroundStyle(Theme.label2).lineLimit(2) }
-                    if !facts.line.isEmpty { Text(facts.line).font(.system(size: 11, design: .monospaced)).foregroundStyle(Theme.label3).lineLimit(1) }
+                    Text(name.isEmpty ? (desc.isEmpty ? "Stream" : desc) : name).scaledFont(size: 14, weight: .semibold).foregroundStyle(Theme.ink).lineLimit(1)
+                    if !name.isEmpty && !desc.isEmpty { Text(desc).scaledFont(size: 12).foregroundStyle(Theme.label2).lineLimit(2) }
+                    if !facts.line.isEmpty { Text(facts.line).scaledFont(size: 11, design: .monospaced).foregroundStyle(Theme.label3).lineLimit(1) }
                 }
                 Spacer(minLength: 12)
                 HStack(spacing: 8) {
                     ForEach(match.badges, id: \.self) { BadgeImage(file: $0) }
                 }
                 if busy { ProgressView().controlSize(.small).frame(width: 14) }
-                else { Image(systemName: "play.fill").font(.system(size: 12)).foregroundStyle(hover ? Theme.ink : Theme.label3) }
+                else { Image(systemName: "play.fill").scaledFont(size: 12).foregroundStyle(hover ? Theme.ink : Theme.label3) }
             }
             .padding(.horizontal, 14).padding(.vertical, 10)
             .background(RoundedRectangle(cornerRadius: 12).fill(hover ? Theme.surface2 : Theme.surface))

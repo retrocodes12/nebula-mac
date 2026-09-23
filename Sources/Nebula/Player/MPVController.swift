@@ -46,6 +46,13 @@ final class MPVController: ObservableObject {
 
     /// A stream with no length is live: no resume point, no scrubbing past the edge.
     var isLive: Bool { loaded && duration <= 0 }
+    /// How far behind the live edge the viewer's own steps back have put them. A step forward
+    /// through a live stream only ever undoes those: past them is the edge, where a jump would
+    /// only buffer. Main thread only (the chrome and the system's remote commands both are).
+    @Published private(set) var liveLag: Double = 0
+    /// Whether a step back or forward can go anywhere.
+    var canStepBack: Bool { !isLive || seekable }
+    var canStepForward: Bool { !isLive || (seekable && liveLag >= 1) }
 
     let layer = MetalLayer()
     private var mpv: OpaquePointer?
@@ -106,7 +113,7 @@ final class MPVController: ObservableObject {
         // an infinite or enormous one traps, so anything that is not a place in a film is 0
         let startAt = given.isFinite && given > 0 && given < 10_000_000 ? given : 0
         DispatchQueue.main.async { [self] in
-            loaded = false; ended = false; failure = nil; buffering = true; timePos = startAt; duration = 0; tracks = []
+            loaded = false; ended = false; failure = nil; buffering = true; timePos = startAt; duration = 0; tracks = []; liveLag = 0
         }
         // the error lines are appended on the engine's queue; clearing them from here raced it.
         // Queued before the load, this runs before any event of the new file is handled.
@@ -126,8 +133,16 @@ final class MPVController: ObservableObject {
     func togglePause() { setFlag("pause", !paused) }
     func setPaused(_ p: Bool) { setFlag("pause", p) }
 
-    func seek(by secs: Double) {
-        if isLive && !seekable { return }
+    /// A step through a live stream stays inside what the engine can reach: back only where it
+    /// says it can seek, forward only as far back as the viewer stepped — the edge, no further.
+    func seek(by given: Double) {
+        var secs = given
+        if isLive {
+            guard seekable else { return }
+            if secs > 0 { secs = min(secs, liveLag) }
+            guard abs(secs) >= 1 else { return }
+            liveLag = max(0, liveLag - secs)
+        }
         command("seek", [String(secs), "relative"])
     }
 

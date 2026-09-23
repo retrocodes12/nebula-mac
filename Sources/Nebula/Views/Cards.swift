@@ -49,8 +49,8 @@ struct PosterCard: View {
                         }
                     }
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(item.name).font(.system(size: 12.5, weight: .medium)).foregroundStyle(Theme.ink).lineLimit(1)
-                    Text(item.releaseInfo ?? " ").font(.system(size: 11, design: .monospaced)).foregroundStyle(Theme.label3).lineLimit(1)
+                    Text(item.name).scaledFont(size: 12.5, weight: .medium).foregroundStyle(Theme.ink).lineLimit(1)
+                    Text(item.releaseInfo ?? " ").scaledFont(size: 11, design: .monospaced).foregroundStyle(Theme.label3).lineLimit(1)
                 }
                 .frame(width: size.width, alignment: .leading)
             }
@@ -93,13 +93,13 @@ struct RowHeader: View {
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
-            Text(title).font(.system(size: 19, weight: .semibold)).foregroundStyle(Theme.ink)
-            if let s = subline { Text(s).font(.system(size: 12)).foregroundStyle(Theme.label3) }
+            Text(title).scaledFont(size: 19, weight: .semibold).foregroundStyle(Theme.ink)
+            if let s = subline { Text(s).scaledFont(size: 12).foregroundStyle(Theme.label3) }
             Spacer()
             if let a = action {
                 Button(action: a) {
-                    HStack(spacing: 4) { Text("See all"); Image(systemName: "chevron.right").font(.system(size: 10, weight: .bold)) }
-                        .font(.system(size: 12.5, weight: .medium)).foregroundStyle(Theme.label2)
+                    HStack(spacing: 4) { Text("See all"); Image(systemName: "chevron.right").scaledFont(size: 10, weight: .bold) }
+                        .scaledFont(size: 12.5, weight: .medium).foregroundStyle(Theme.label2)
                 }
                 .buttonStyle(.plain)
             }
@@ -159,8 +159,8 @@ struct ContinueCard: View {
                     LinearGradient(colors: [.clear, .black.opacity(0.7)], startPoint: .center, endPoint: .bottom)
                     VStack(alignment: .leading, spacing: 7) {
                         HStack {
-                            Image(systemName: "play.fill").font(.system(size: 11))
-                            Text(Fmt.left(rec.dur - rec.pos)).font(.system(size: 11.5, weight: .semibold, design: .monospaced))
+                            Image(systemName: "play.fill").scaledFont(size: 11)
+                            Text(Fmt.left(rec.dur - rec.pos)).scaledFont(size: 11.5, weight: .semibold, design: .monospaced)
                             Spacer()
                         }
                         .foregroundStyle(.white)
@@ -178,8 +178,8 @@ struct ContinueCard: View {
                 .clipShape(RoundedRectangle(cornerRadius: Theme.cardRadius))
                 .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius).strokeBorder(hover ? Color.white : Theme.line, lineWidth: hover ? 2 : 1))
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(rec.name.isEmpty ? "Untitled" : rec.name).font(.system(size: 12.5, weight: .medium)).foregroundStyle(Theme.ink).lineLimit(1)
-                    Text(Ids.episodeKicker(rec.id) ?? typeLabel(rec.type)).font(.system(size: 11, design: .monospaced)).foregroundStyle(Theme.label3).lineLimit(1)
+                    Text(rec.name.isEmpty ? "Untitled" : rec.name).scaledFont(size: 12.5, weight: .medium).foregroundStyle(Theme.ink).lineLimit(1)
+                    Text(Ids.episodeKicker(rec.id) ?? typeLabel(rec.type)).scaledFont(size: 11, design: .monospaced).foregroundStyle(Theme.label3).lineLimit(1)
                 }
             }
             .scaleEffect(hover ? 1.025 : 1)
@@ -224,6 +224,12 @@ struct PosterGrid: View {
     let items: [MetaItem]
     let addonUrl: (MetaItem) -> String
     var onReachEnd: (() -> Void)? = nil
+    /// The room under the art for the two label lines, which grow with the text size on a phone.
+    #if os(iOS)
+    @ScaledMetric(relativeTo: .caption) private var labelRoom: CGFloat = 42
+    #else
+    private let labelRoom: CGFloat = 42
+    #endif
 
     var body: some View {
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 150, maximum: 190), spacing: 18, alignment: .top)], alignment: .leading, spacing: 24) {
@@ -237,10 +243,10 @@ struct PosterGrid: View {
         }
     }
 
-    // the card is its art plus 42 points of label, so the cell reserves both
+    // the card is its art plus its label, so the cell reserves both
     private func cellRatio(_ item: MetaItem) -> CGFloat {
         let s = Art.size(shape: item.posterShape, height: 100)
         let w: CGFloat = 170
-        return w / (w * s.height / s.width + 42)
+        return w / (w * s.height / s.width + labelRoom)
     }
 }
