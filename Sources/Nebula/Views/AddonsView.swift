@@ -61,7 +61,10 @@ struct AddonsView: View {
                 .frame(width: 38, height: 38).clipShape(RoundedRectangle(cornerRadius: 9))
             VStack(alignment: .leading, spacing: 3) {
                 Text(a.name).scaledFont(size: 14, weight: .semibold).foregroundStyle(a.enabled ? Theme.ink : Theme.label3)
-                Text(URL(string: a.base)?.host ?? a.base).scaledFont(size: 11.5, design: .monospaced).foregroundStyle(Theme.label3).lineLimit(1)
+                // a phone row is full (logo, the … menu, the switch): the address may shrink a little, and when it
+                // still does not fit it loses its middle, not the end that says whose it is
+                Text(URL(string: a.base)?.host ?? a.base).scaledFont(size: 11.5, design: .monospaced).foregroundStyle(Theme.label3)
+                    .lineLimit(1).minimumScaleFactor(0.85).truncationMode(.middle)
             }
             .layoutPriority(1)
             Spacer()
