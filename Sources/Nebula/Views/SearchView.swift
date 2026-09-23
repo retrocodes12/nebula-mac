@@ -275,6 +275,7 @@ struct PickMenu: View {
             .overlay(Capsule().strokeBorder(Theme.line))
             .contentShape(Capsule())
             .fixedSize()
+            .tallTouch(34)
         }
         .buttonStyle(.plain)
         .popover(isPresented: $open, arrowEdge: .bottom) {

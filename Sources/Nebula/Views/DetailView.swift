@@ -105,13 +105,25 @@ struct DetailView: View {
     }
 
     private var actions: some View {
-        HStack(spacing: 12) {
-            Button(action: playMain) {
-                HStack(spacing: 8) { Image(systemName: "play.fill").scaledFont(size: 12); Text(playLabel) }
-            }
-            .buttonStyle(PillButtonStyle())
-            .layoutPriority(1)
-            .disabled(loading && meta == nil && item.type == "series")
+        // one row while it fits; at a large text size ("Resume · 1 h 12 min left" beside two round buttons) the round
+        // buttons go under the pill instead of running past the margin and pulling the page off centre
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 12) { playPill; roundActions }
+            VStack(alignment: .leading, spacing: 12) { playPill; HStack(spacing: 12) { roundActions } }
+        }
+        .id(model.libraryVersion &+ model.progressVersion)
+    }
+
+    private var playPill: some View {
+        Button(action: playMain) {
+            HStack(spacing: 8) { Image(systemName: "play.fill").scaledFont(size: 12); Text(playLabel) }
+        }
+        .buttonStyle(PillButtonStyle())
+        .layoutPriority(1)
+        .disabled(loading && meta == nil && item.type == "series")
+    }
+
+    @ViewBuilder private var roundActions: some View {
             let saved = model.library.contains(item.type, item.id)
             RoundAction(icon: saved ? "checkmark" : "plus", label: saved ? "Remove from My List" : "Add to My List", on: saved) {
                 let nowIn = model.library.toggle(full, addonUrl: addonUrl)
@@ -123,8 +135,6 @@ struct DetailView: View {
                     if watched { model.progress.markUnwatched(item.type, item.id) } else { model.progress.markWatched(item.type, item.id) }
                 }
             }
-        }
-        .id(model.libraryVersion &+ model.progressVersion)
     }
 
     private var playLabel: String {

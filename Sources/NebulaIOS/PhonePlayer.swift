@@ -190,8 +190,8 @@ struct PhonePlayer: View {
             HStack(alignment: .top, spacing: 12) {
                 GlassCircle(icon: "chevron.down", label: "Close", size: 38) { close() }
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(request.title).font(.system(size: 16, weight: .semibold)).foregroundStyle(.white).lineLimit(1)
-                    if let k = request.kicker { Text(k).font(.system(size: 12)).foregroundStyle(.white.opacity(0.75)).lineLimit(1) }
+                    Text(request.title).scaledFont(size: 16, weight: .semibold).foregroundStyle(.white).lineLimit(1)
+                    if let k = request.kicker { Text(k).scaledFont(size: 12).foregroundStyle(.white.opacity(0.75)).lineLimit(1) }
                     if !sourceLine.isEmpty {
                         Text(sourceLine).font(.system(size: 10, weight: .medium, design: .monospaced)).foregroundStyle(.white.opacity(0.5)).lineLimit(1)
                     }
@@ -299,7 +299,7 @@ struct PhonePlayer: View {
     private func failureCard(_ text: String) -> some View {
         VStack(spacing: 14) {
             Image(systemName: "exclamationmark.triangle").font(.system(size: 26, weight: .light)).foregroundStyle(.white.opacity(0.8))
-            Text(text).font(.system(size: 15, weight: .medium)).foregroundStyle(.white).multilineTextAlignment(.center)
+            Text(text).scaledFont(size: 15, weight: .medium).foregroundStyle(.white).multilineTextAlignment(.center)
             // side by side when they fit; one above the other at a large text size
             ViewThatFits {
                 HStack(spacing: 10) { failureActions }
@@ -327,9 +327,9 @@ struct PhonePlayer: View {
                     HStack(spacing: 10) {
                         if nextBusy { ProgressView().controlSize(.small).tint(.white) } else { Image(systemName: "forward.end.fill") }
                         VStack(alignment: .leading, spacing: 1) {
-                            Text("Next episode").font(.system(size: 13, weight: .semibold))
+                            Text("Next episode").scaledFont(size: 13, weight: .semibold)
                             Text(Ids.episodeTag(n.id).map { "\($0) · \(n.name)" } ?? n.name)
-                                .font(.system(size: 11)).opacity(0.7).lineLimit(1)
+                                .scaledFont(size: 11).opacity(0.7).lineLimit(1)
                         }
                     }
                     .foregroundStyle(.white)

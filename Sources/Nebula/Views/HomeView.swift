@@ -58,6 +58,10 @@ struct HomeView: View {
             if let h = heroRow, ids.contains(h) { return }
             heroRow = model.homeRows.first(where: HomeView.hasArt)?.id
         }
+        // the viewer reordered or switched add-ons: the hero follows the new first row with art
+        .onChange(of: model.activeAddons.map(\.manifestUrl)) { _ in
+            heroRow = model.homeRows.first(where: HomeView.hasArt)?.id
+        }
     }
 }
 

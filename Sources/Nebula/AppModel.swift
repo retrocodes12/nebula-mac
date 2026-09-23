@@ -127,7 +127,9 @@ final class AppModel: ObservableObject {
     /// again forgets them, and so does the connection coming back or the app coming to the
     /// front — a phone off the network for a commute must not come back to add-ons skipped
     /// for another quarter of an hour.
-    private var manifestMisses: [String: (at: Date, count: Int)] = [:]
+    /// `offline`: it missed for want of a connection (no network, a lost one, no name lookup) — the only kind that
+    /// coming to the front forgets; a slow or broken add-on keeps its back-off through every Cmd-Tab
+    private var manifestMisses: [String: (at: Date, count: Int, offline: Bool)] = [:]
     private var toastTask: Task<Void, Never>?
     /// The way out to the network: its coming back clears the misses.
     private let network = NWPathMonitor()
@@ -246,8 +248,10 @@ final class AppModel: ObservableObject {
         } else {
             let stremio = stremio
             load = Task { [weak self] in
-                let got = try? await stremio.loadManifest(u)
-                self?.manifestLanded(u, got)
+                var got: ManifestInfo?
+                var offline = false
+                do { got = try await stremio.loadManifest(u) } catch { offline = AppModel.isConnectivity(error) }
+                self?.manifestLanded(u, got, offline: offline)
                 return got
             }
             manifestLoads[u] = load
@@ -255,10 +259,18 @@ final class AppModel: ObservableObject {
         return await Patience.value(of: load, within: seconds) ?? nil
     }
 
-    private func manifestLanded(_ u: String, _ m: ManifestInfo?) {
+    private func manifestLanded(_ u: String, _ m: ManifestInfo?, offline: Bool = false) {
         manifestLoads[u] = nil
         if let m = m { manifestCache[u] = m; manifestMisses[u] = nil }
-        else { manifestMisses[u] = (Date(), (manifestMisses[u]?.count ?? 0) + 1) }
+        else { manifestMisses[u] = (Date(), (manifestMisses[u]?.count ?? 0) + 1, offline || !online) }
+    }
+
+    /// The device had no way out, as opposed to the add-on being down, slow or wrong.
+    private static func isConnectivity(_ e: Error) -> Bool {
+        guard let u = e as? URLError else { return false }
+        let noWayOut: [URLError.Code] = [.notConnectedToInternet, .networkConnectionLost, .dataNotAllowed,
+                                         .internationalRoamingOff, .dnsLookupFailed, .cannotFindHost]
+        return noWayOut.contains(u.code)
     }
 
     /// Every add-on's manifest at once, in the add-ons' order; nil where one did not answer —
@@ -290,7 +302,9 @@ final class AppModel: ObservableObject {
     /// The app came to the front (the phone's scene went active, the Mac's window did): a
     /// laptop that woke before its Wi-Fi, or a phone back from a tunnel, starts clean.
     func cameToFront() {
-        forgetMisses()
+        // only what missed for want of a connection: the Mac comes to the front on every Cmd-Tab, and forgetting
+        // everything there asked a hanging add-on again each time (streams and captions waited on it)
+        manifestMisses = manifestMisses.filter { !$0.value.offline }
         if homeFailed { retryHome() }
     }
 
@@ -382,7 +396,10 @@ final class AppModel: ObservableObject {
                 case .manifest(let i, let m):
                     out -= 1
                     guard let m = m else { misses += 1; break }
-                    let want = Array(m.catalogs.filter(\.browsable).prefix(max(0, budget - asked)))
+                    // a share each, not first come first served: a catalog-heavy add-on whose manifest landed first
+                    // took all 24 and the viewer's first add-on got no rows (and no hero) on a cold launch
+                    let share = max(6, budget / max(1, active.count))
+                    let want = Array(m.catalogs.filter(\.browsable).prefix(min(share, max(0, budget - asked))))
                     catalogs[i] = want
                     rows[i] = Array(repeating: nil, count: want.count)
                     asked += want.count

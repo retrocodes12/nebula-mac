@@ -284,7 +284,9 @@ final class MPVController: ObservableObject {
             case "paused-for-cache", "seeking":
                 let busy = string("paused-for-cache") == "yes" || string("seeking") == "yes"
                 publish { $0.buffering = busy && !$0.ended }
-            case "eof-reached": if flag == true { publish { $0.ended = true; $0.buffering = false } }
+            // both ways: with keep-open a seek back from the end clears it, or the centre button stayed Replay
+            // (restarting the film from 0:00), keep-awake stayed off and Now Playing said stopped
+            case "eof-reached": if let f = flag { publish { $0.ended = f; if f { $0.buffering = false } } }
             case "volume": if let v = double { publish { $0.volume = v } }
             case "mute": if let f = flag { publish { $0.muted = f } }
             case "speed": if let v = double { publish { $0.speed = v } }

@@ -169,6 +169,17 @@ extension View {
 
     /// On a phone, at least `side` points to touch (Apple's minimum is 44), whatever size the
     /// control is drawn at. A window's pointer needs no help.
+    /// A control drawn shorter than a finger ([height]) answers taps over 44 pt on a phone, without moving
+    /// anything around it: the hit shape grows, the layout does not.
+    @ViewBuilder func tallTouch(_ height: CGFloat, to side: CGFloat = 44) -> some View {
+        #if os(iOS)
+        let grow = max(0, (side - height) / 2)
+        self.padding(.vertical, grow).contentShape(Rectangle()).padding(.vertical, -grow)
+        #else
+        self
+        #endif
+    }
+
     @ViewBuilder func touchArea(_ side: CGFloat = 44) -> some View {
         #if os(iOS)
         self.frame(minWidth: side, minHeight: side).contentShape(Rectangle())
@@ -283,6 +294,7 @@ struct Chip: View {
                 .background(Capsule().fill(on ? Theme.ink : Theme.surface))
                 .overlay(Capsule().strokeBorder(on ? Color.clear : Theme.line))
                 .contentShape(Capsule())
+                .tallTouch(30)
         }
         .buttonStyle(.plain)
     }
