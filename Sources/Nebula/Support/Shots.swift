@@ -19,7 +19,8 @@ enum Shots {
             window.setFrame(NSRect(x: 40, y: 40, width: 1440, height: 900), display: true)
             if let extra = ProcessInfo.processInfo.environment["NEBULA_SHOTS_ADDON"], !extra.isEmpty { _ = await m.installAddon(extra) }
 
-            await settle { !m.homeRows.isEmpty }
+            // each add-on's rows paint as they come: wait for the ones the next shots need
+            await settle { ["movie", "series"].allSatisfy { t in m.homeRows.contains { row in row.items.contains { item in item.type == t } } } }
             await snap(window, dir, "01-home")
 
             let series = m.homeRows.flatMap { r in r.items.map { ($0, r.addon) } }.first { $0.0.type == "series" }

@@ -96,12 +96,18 @@ enum Launch {
         if let raw = value("--addon") {
             Task { if let e = await model.installAddon(raw) { model.say(e, error: true) } }
         }
-        // onto a title page or a streams page: the first film or series Home shows, once it has any
+        // onto a title page or a streams page: the first film or series Home shows. Home paints
+        // each add-on's rows as they come, so "any row" can be a sports row with no film in it
+        // yet — wait for the kind of title the page needs
         if let page = value("--page") {
             Task {
-                for _ in 0..<160 where model.homeRows.isEmpty { try? await Task.sleep(nanoseconds: 250_000_000) }
-                let all = model.homeRows.flatMap { r in r.items.map { ($0, r.addon) } }
-                let film = all.first { $0.0.type == "movie" }, series = all.first { $0.0.type == "series" }
+                let want = page == "series" ? "series" : "movie"
+                func firstOf(_ type: String) -> (MetaItem, Addon)? {
+                    for r in model.homeRows { if let i = r.items.first(where: { $0.type == type }) { return (i, r.addon) } }
+                    return nil
+                }
+                for _ in 0..<160 where firstOf(want) == nil { try? await Task.sleep(nanoseconds: 250_000_000) }
+                let film = firstOf("movie"), series = firstOf("series")
                 switch page {
                 case "film": if let f = film { model.open(f.0, addonUrl: f.1.manifestUrl) }
                 case "series": if let s = series { model.open(s.0, addonUrl: s.1.manifestUrl) }
