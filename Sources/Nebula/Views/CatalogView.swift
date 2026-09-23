@@ -76,7 +76,7 @@ struct CatalogView: View {
             .padding(.horizontal, Theme.pad).padding(.bottom, 50)
         }
         .background(Theme.bg)
-        .overlay(alignment: .topLeading) { BackButton().padding(.leading, 22).padding(.top, Theme.backTop(0)) }
+        .overlay(alignment: .topLeading) { BackButton().padding(.leading, 22).padding(.top, Theme.backTop) }
         .task(id: genre) { await pager.reset(addon: target.addon, catalog: target.catalog, genre: genre, stremio: model.stremio) }
     }
 }

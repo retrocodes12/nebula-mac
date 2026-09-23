@@ -53,11 +53,13 @@ extension Theme {
         #endif
     }
 
-    /// Where a pushed page's Back button sits: just under a phone's status bar (`bleed` is how
-    /// far the page's own art runs up under it), and clear of a window's traffic lights.
-    static func backTop(_ bleed: CGFloat) -> CGFloat {
+    /// Where a pushed page's Back button sits: just under a phone's status bar, and clear of a
+    /// window's traffic lights. Measured from the top of the page's frame, which on a phone is
+    /// the status bar's foot even when the page's art runs up under it — an overlay is laid out
+    /// in the frame the page was given, not in the one its art took.
+    static var backTop: CGFloat {
         #if os(iOS)
-        return bleed + 6
+        return 6
         #else
         return 44
         #endif
@@ -126,7 +128,7 @@ struct EdgeScroller<Content: View>: View {
             HStack(spacing: 0) {
                 LinearGradient(colors: [.clear, .black], startPoint: .leading, endPoint: .trailing).frame(width: Theme.pad * 0.75)
                 Rectangle()
-                LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing).frame(width: Theme.pad)
+                LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing).frame(width: max(Theme.pad, 28))
             }
         }
         .padding(.horizontal, -Theme.pad)
@@ -226,6 +228,8 @@ struct PillButtonStyle: ButtonStyle {
             let accent = model.accent
             configuration.label
                 .scaledFont(size: 14, weight: .semibold)
+                // a pill never wraps: at a large text size "Watch" broke into "Watc / h"
+                .lineLimit(1).fixedSize(horizontal: true, vertical: false)
                 .padding(.horizontal, 22)
                 .padding(.vertical, 8).frame(minHeight: 40)     // grows with a larger text size
                 .foregroundStyle(filled ? accent.readableInk : Theme.ink)

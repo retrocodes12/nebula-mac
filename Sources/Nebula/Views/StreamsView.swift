@@ -73,7 +73,7 @@ struct StreamsView: View {
         }
         .background(Theme.bg)
         .bleedsUnderStatusBar()
-        .overlay(alignment: .topLeading) { BackButton().padding(.leading, 22).padding(.top, Theme.backTop(bleed)) }
+        .overlay(alignment: .topLeading) { BackButton().padding(.leading, 22).padding(.top, Theme.backTop) }
         .onDisappear {
             // Back while a tap waited for the series: that tap is void
             waitTask?.cancel(); waitTask = nil; waiting = nil

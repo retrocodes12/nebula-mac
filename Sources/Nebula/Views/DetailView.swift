@@ -62,7 +62,7 @@ struct DetailView: View {
         }
         .background(Theme.bg)
         .bleedsUnderStatusBar()
-        .overlay(alignment: .topLeading) { BackButton().padding(.leading, 22).padding(.top, Theme.backTop(bleed)) }
+        .overlay(alignment: .topLeading) { BackButton().padding(.leading, 22).padding(.top, Theme.backTop) }
         .task {
             if let (m, a) = await model.loadMeta(item, addonUrl: addonUrl) {
                 meta = m; metaAddon = a

@@ -300,9 +300,10 @@ struct PhonePlayer: View {
         VStack(spacing: 14) {
             Image(systemName: "exclamationmark.triangle").font(.system(size: 26, weight: .light)).foregroundStyle(.white.opacity(0.8))
             Text(text).font(.system(size: 15, weight: .medium)).foregroundStyle(.white).multilineTextAlignment(.center)
-            HStack(spacing: 10) {
-                if resolved != nil { Button("Try again") { retry() }.buttonStyle(PillButtonStyle(filled: false)) }
-                Button("Try another stream") { close() }.buttonStyle(PillButtonStyle())
+            // side by side when they fit; one above the other at a large text size
+            ViewThatFits {
+                HStack(spacing: 10) { failureActions }
+                VStack(spacing: 10) { failureActions }
             }
         }
         .padding(24)
@@ -310,6 +311,11 @@ struct PhonePlayer: View {
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20))
         .environment(\.colorScheme, .dark)
         .padding(.horizontal, 24)
+    }
+
+    @ViewBuilder private var failureActions: some View {
+        if resolved != nil { Button("Try again") { retry() }.buttonStyle(PillButtonStyle(filled: false)) }
+        Button("Try another stream") { close() }.buttonStyle(PillButtonStyle())
     }
 
     private func nextPill(_ n: Episode) -> some View {
