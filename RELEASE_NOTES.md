@@ -1,5 +1,7 @@
 Nebula for Mac and iPhone — native Swift apps (SwiftUI, libmpv engine). macOS 13 or later on Apple silicon and Intel; iOS 16 or later, iPad included.
 
+**New in 0.3.1** — a security update. An add-on, or a Nebula link opened from a web page, can only hand the player a web address (never a file on this computer), and on the iPhone your sign-in is kept out of backups, so restoring a backup onto another phone does not make it this one.
+
 **New in 0.3.0** — a full audit pass on both apps. The Mac answers its play/pause keys, headphone controls and Control Center, and the phone's lock screen shows what is playing. Home no longer waits for a slow add-on and never reshuffles the rows you are looking at; add-ons that could not be reached are asked again when the connection comes back, and a streams page says how many did not answer. Subtitles attach once both the video and your add-ons are ready. A film you seek back into after its end plays on instead of starting over, the phone stays awake while a stream is starting, text follows the phone's text size, the title art runs under the status bar, and small buttons take a full-size tap. Progress that reaches the app broken can no longer wipe a resume point.
 
 **Install on a Mac**: open `Nebula.dmg`, drag Nebula to Applications. The app is not notarised, so the first time macOS refuses it: go to System Settings › Privacy & Security and choose **Open Anyway** beside the line about Nebula (on macOS 13 and 14, right-click › **Open** also works).
