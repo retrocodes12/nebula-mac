@@ -208,15 +208,22 @@ public struct Stremio: Sendable {
         Stremio.parseStreams(try await getJSON("\(base)/stream/\(Stremio.enc(type))/\(Stremio.enc(id)).json"))
     }
 
+    /// A web address. An add-on's (or a hand-off link's) stream and subtitle addresses are played by an engine that also
+    /// opens file: and other schemes, so anything but http(s) is dropped where it comes in (2026-09-24).
+    public static func isWeb(_ u: String) -> Bool {
+        let l = u.trimmingCharacters(in: .whitespaces).lowercased()
+        return l.hasPrefix("http://") || l.hasPrefix("https://")
+    }
+
     public static func parseStreams(_ j: JSONObject) -> [StreamItem] {
         j.objs("streams").compactMap { s in
             let url = s.str("url")
-            // a row with no address (a torrent, an external page) has nothing this player can open
-            if url.isEmpty { return nil }
+            // a row with no web address (a torrent, an external page, a local path) has nothing this player may open
+            if url.isEmpty || !isWeb(url) { return nil }
             let bh = s.obj("behaviorHints") ?? [:]
             var item = StreamItem(name: s.str("name"), title: s.text("title") ?? s.str("description"), url: ClearKey.cleanUrl(url))
             item.subtitles = s.objs("subtitles").compactMap { o in
-                o.text("url").map { SubTrack(url: $0, lang: o.text("lang") ?? "und") }
+                o.text("url").flatMap { isWeb($0) ? SubTrack(url: $0, lang: o.text("lang") ?? "und") : nil }
             }
             item.videoSize = bh.int64("videoSize")
             item.bingeGroup = bh.str("bingeGroup")
@@ -233,7 +240,7 @@ public struct Stremio: Sendable {
     public func loadSubtitles(base: String, type: String, id: String) async throws -> [SubTrack] {
         let j = try await getJSON("\(base)/subtitles/\(Stremio.enc(type))/\(Stremio.enc(id)).json")
         return j.objs("subtitles").compactMap { o in
-            o.text("url").map { SubTrack(url: $0, lang: o.text("lang") ?? o.text("language") ?? "und") }
+            o.text("url").flatMap { Stremio.isWeb($0) ? SubTrack(url: $0, lang: o.text("lang") ?? o.text("language") ?? "und") : nil }
         }
     }
 }

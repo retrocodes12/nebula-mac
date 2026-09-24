@@ -534,7 +534,8 @@ extension AppModel {
         }
         guard url.scheme == "nebula", let c = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return }
         let q = Dictionary((c.queryItems ?? []).map { ($0.name, $0.value ?? "") }, uniquingKeysWith: { a, _ in a })
-        guard let address = q["mpd"] ?? q["url"], !address.isEmpty else { return }
+        // any web page can open this link: it may hand over a web address to play, nothing else (a file: path, say)
+        guard let address = q["mpd"] ?? q["url"], !address.isEmpty, Stremio.isWeb(address) else { return }
         let title = q["t"].flatMap { $0.isEmpty ? nil : $0 } ?? "Nebula"
         var s = StreamItem(name: "", title: "", url: ClearKey.cleanUrl(address))
         s.clearKeys = ClearKey.fromFragment(address)

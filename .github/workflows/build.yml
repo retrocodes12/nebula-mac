@@ -7,6 +7,10 @@ on:
     paths-ignore: ['**.md']
   workflow_dispatch:
 
+# read-only unless a job says otherwise (the tag release job does); every action pinned by commit (2026-09-24)
+permissions:
+  contents: read
+
 concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true
@@ -17,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     container: swift:6.0-jammy
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - run: swift test
 
   mac:
@@ -25,13 +29,13 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Toolchain
         run: |
           sw_vers
           swift --version
           xcodebuild -version
-      - uses: actions/cache@v4
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: .build
           key: spm-${{ runner.os }}-${{ hashFiles('Package.swift') }}-v1
@@ -99,13 +103,13 @@ jobs:
           for w in $IDS; do screencapture -x -o -l "$w" "shots/13-handoff-$w-screen.png" || true; done
           kill $PID 2>/dev/null || true
           test "$COUNT" = 1
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: shots
           path: shots
           if-no-files-found: warn
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: Nebula-mac
           path: |
@@ -117,13 +121,13 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Toolchain
         run: |
           sw_vers
           xcodebuild -version
           brew install xcodegen
-      - uses: actions/cache@v4
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/Library/Caches/org.swift.swiftpm
           key: spm-ios-${{ hashFiles('Package.swift', 'iOS/project.yml') }}-v1
@@ -152,7 +156,7 @@ jobs:
           ls -la "$APP/Frameworks" 2>/dev/null || echo "(no embedded frameworks)"
           du -sh dist/Nebula.ipa
           plutil -p "$APP/Info.plist" | grep -E "CFBundleIdentifier|CFBundleShortVersionString|MinimumOSVersion"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: Nebula-ios
           path: dist/Nebula.ipa
@@ -228,7 +232,7 @@ jobs:
           SETTLE=16 shot player-chrome --play "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8" --title "Test stream"
           unset SIMCTL_CHILD_NEBULA_KEEP_CHROME
           ls -la shots
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: shots-ios
@@ -244,12 +248,12 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: Nebula-mac
           path: dist
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: Nebula-ios
           path: dist

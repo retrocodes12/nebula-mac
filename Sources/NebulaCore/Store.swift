@@ -36,6 +36,15 @@ public final class Store: @unchecked Sendable {
             try? Data(v.utf8).write(to: file(key), options: [.atomic])
             // the credential lives here too — keep the files to this user
             try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file(key).path)
+            #if os(iOS)
+            // …and out of backups: restored onto another phone, this device's sign-in would make that phone this device
+            if key == "cloud_link" {
+                var u = file(key)
+                var rv = URLResourceValues()
+                rv.isExcludedFromBackup = true
+                try? u.setResourceValues(rv)
+            }
+            #endif
         } else {
             cache[key] = nil
             try? FileManager.default.removeItem(at: file(key))

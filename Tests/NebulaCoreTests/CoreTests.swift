@@ -83,6 +83,22 @@ final class ManifestTests: XCTestCase {
         XCTAssertEqual(s[1].title, "d")
         XCTAssertEqual(s[1].clearKeys.count, 1)
     }
+
+    /// 2026-09-24: an add-on names web addresses only — a file: path or another scheme is dropped where it comes in.
+    func testOnlyWebAddressesArePlayed() {
+        let j = JSON.object("""
+        {"streams":[
+          {"name":"ok","url":"HTTPS://h.test/a.mkv","subtitles":[{"url":"https://s.test/a.srt","lang":"eng"},{"url":"file:///etc/passwd","lang":"eng"}]},
+          {"name":"local","url":"file:///Users/me/secret.mkv"},
+          {"name":"script","url":"javascript:alert(1)"},
+          {"name":"data","url":"data:video/mp4;base64,AAAA"}]}
+        """)!
+        let s = Stremio.parseStreams(j)
+        XCTAssertEqual(s.map(\.name), ["ok"])
+        XCTAssertEqual(s[0].subtitles.map(\.url), ["https://s.test/a.srt"])
+        XCTAssertTrue(Stremio.isWeb(" http://x.test/y "))
+        XCTAssertFalse(Stremio.isWeb("smb://nas/film.mkv"))
+    }
 }
 
 final class ClearKeyTests: XCTestCase {
