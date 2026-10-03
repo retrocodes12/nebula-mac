@@ -10,16 +10,22 @@ public struct Stremio: Sendable {
     public init(transport: Transport = URLSessionTransport()) { self.transport = transport }
 
     public struct BadAddress: Error {}
+    public struct BadJSON: Error {}
+    public struct BadManifest: Error {}
+    public struct MissingRequiredExtras: Error {}
 
-    public func getData(_ address: String) async throws -> Data {
+    public func getData(_ address: String, headers: [String: String] = [:]) async throws -> Data {
         guard let url = URL(string: address) else { throw BadAddress() }
-        let (data, code) = try await transport.send(Net.addonRequest(url))
+        var request = Net.addonRequest(url)
+        for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
+        let (data, code) = try await transport.send(request)
         guard (200...299).contains(code) else { throw HTTPFailure(code: code, error: "") }
         return data
     }
 
-    public func getJSON(_ address: String) async throws -> JSONObject {
-        JSON.object(try await getData(address)) ?? [:]
+    public func getJSON(_ address: String, headers: [String: String] = [:]) async throws -> JSONObject {
+        guard let object = JSON.object(try await getData(address, headers: headers)) else { throw BadJSON() }
+        return object
     }
 
     // MARK: addresses
@@ -56,7 +62,14 @@ public struct Stremio: Sendable {
     // MARK: manifest
 
     public func loadManifest(_ url: String) async throws -> ManifestInfo {
-        Stremio.parseManifest(try await getJSON(url), url: url)
+        let j = try await getJSON(url)
+        let named = ["id", "name"].contains { (j[$0] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false }
+        let resources = (j["resources"] as? [Any]).map { list in
+            list.allSatisfy { $0 is String || (($0 as? JSONObject)?["name"] is String) }
+        } ?? false
+        let catalogs = (j["catalogs"] as? [Any])?.isEmpty == false
+        guard named, resources || catalogs else { throw BadManifest() }
+        return Stremio.parseManifest(j, url: url)
     }
 
     public static func parseManifest(_ j: JSONObject, url: String) -> ManifestInfo {
@@ -66,12 +79,10 @@ public struct Stremio: Sendable {
         for c in j.objs("catalogs") {
             var genres: [String] = []
             var search = false, skip = false
-            // an extra the add-on insists on is only fine when it lists the values to pick from
-            var required = Set<String>(), withOptions = Set<String>()
+            var required = Set<String>()
             for e in c.objs("extra") {
                 let name = e.str("name")
                 let opts = e.strs("options") ?? []
-                if !opts.isEmpty { withOptions.insert(name) }
                 if e.bool("isRequired") { required.insert(name) }
                 switch name {
                 case "genre": genres.append(contentsOf: opts)
@@ -86,15 +97,17 @@ public struct Stremio: Sendable {
                 if s == "skip" { skip = true }
             }
             let type = c.str("type"), id = c.str("id")
-            let browsable = !type.isEmpty && !id.isEmpty && required.allSatisfy { withOptions.contains($0) }
+            let valid = !type.isEmpty && !id.isEmpty
+            let browsable = valid && required.isEmpty
+            search = valid && search && required.isSubset(of: ["search"])
             cats.append(CatalogRef(type: type, id: id, name: c.text("name") ?? id, genres: genres,
-                                   search: search, skip: skip, browsable: browsable))
+                                   search: search, skip: skip, browsable: browsable, requiredExtras: required))
         }
         // A resource is either the plain string "stream" (scoped by the top-level types and
         // idPrefixes) or an object with its own. A manifest may name the SAME resource more than
         // once with different scopes, so the scopes are UNIONED — keeping the last one hid an
-        // add-on's films behind its live channels on the other clients. A scope with no types or
-        // no prefixes matches everything, and stays that way once seen.
+        // add-on's films behind its live channels on the other clients. Each original type/prefix
+        // pairing is retained; an omitted or empty dimension is unrestricted within that scope.
         let topTypes = j.strs("types"), topPrefixes = j.strs("idPrefixes")
         var scopes: [String: ScopeBuilder] = ["stream": ScopeBuilder(), "meta": ScopeBuilder(), "subtitles": ScopeBuilder()]
         for r in j.arr("resources") {
@@ -113,9 +126,11 @@ public struct Stremio: Sendable {
         var has = false
         var types: [String]? = []
         var prefixes: [String]? = []
+        var pairs: [ResourceScope.Pair] = []
 
         mutating func add(_ t: [String]?, _ p: [String]?) {
             has = true
+            pairs.append(ResourceScope.Pair(types: t, prefixes: p))
             if let t = t, !t.isEmpty { if types != nil { for x in t where !types!.contains(x) { types!.append(x) } } } else { types = nil }
             if let p = p, !p.isEmpty { if prefixes != nil { for x in p where !prefixes!.contains(x) { prefixes!.append(x) } } } else { prefixes = nil }
         }
@@ -123,7 +138,7 @@ public struct Stremio: Sendable {
         func out() -> ResourceScope {
             guard has else { return ResourceScope() }
             return ResourceScope(has: true, types: (types?.isEmpty ?? true) ? nil : types,
-                                 prefixes: (prefixes?.isEmpty ?? true) ? nil : prefixes)
+                                 prefixes: (prefixes?.isEmpty ?? true) ? nil : prefixes, pairs: pairs)
         }
     }
 
@@ -132,10 +147,11 @@ public struct Stremio: Sendable {
     public func loadCatalog(base: String, catalog c: CatalogRef, genre: String? = nil, query: String? = nil, skip: Int = 0) async throws -> [MetaItem] {
         var u = "\(base)/catalog/\(Stremio.enc(c.type))/\(Stremio.enc(c.id))"
         // every extra goes in one path segment, joined with &
-        var extras: [String] = []
-        if let q = query, !q.isEmpty { extras.append("search=" + Stremio.enc(q)) }
-        else if let g = genre, !g.isEmpty { extras.append("genre=" + Stremio.enc(g)) }
-        if skip > 0 { extras.append("skip=\(skip)") }
+        var extras: [String] = [], supplied = Set<String>()
+        if let q = query, !q.isEmpty { extras.append("search=" + Stremio.enc(q)); supplied.insert("search") }
+        else if let g = genre, !g.isEmpty { extras.append("genre=" + Stremio.enc(g)); supplied.insert("genre") }
+        if skip > 0 { extras.append("skip=\(skip)"); supplied.insert("skip") }
+        guard c.requiredExtras.isSubset(of: supplied) else { throw MissingRequiredExtras() }
         if !extras.isEmpty { u += "/" + extras.joined(separator: "&") }
         u += ".json"
         return Stremio.parseMetas(try await getJSON(u), fallbackType: c.type)

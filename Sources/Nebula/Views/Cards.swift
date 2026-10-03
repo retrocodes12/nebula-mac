@@ -146,7 +146,7 @@ struct ContinueCard: View {
     @State private var hover = false
 
     var seriesItem: MetaItem {
-        MetaItem(id: Ids.seriesId(of: rec.id), type: rec.type, name: rec.name, poster: rec.poster, posterShape: rec.shape, background: rec.back)
+        MetaItem(id: Ids.itemId(type: rec.type, id: rec.id), type: rec.type, name: rec.name, poster: rec.poster, posterShape: rec.shape, background: rec.back)
     }
 
     var body: some View {
@@ -179,7 +179,7 @@ struct ContinueCard: View {
                 .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius).strokeBorder(hover ? Color.white : Theme.line, lineWidth: hover ? 2 : 1))
                 VStack(alignment: .leading, spacing: 2) {
                     Text(rec.name.isEmpty ? "Untitled" : rec.name).scaledFont(size: 12.5, weight: .medium).foregroundStyle(Theme.ink).lineLimit(1)
-                    Text(Ids.episodeKicker(rec.id) ?? typeLabel(rec.type)).scaledFont(size: 11, design: .monospaced).foregroundStyle(Theme.label3).lineLimit(1)
+                    Text((rec.type == "series" ? Ids.episodeKicker(rec.id) : nil) ?? typeLabel(rec.type)).scaledFont(size: 11, design: .monospaced).foregroundStyle(Theme.label3).lineLimit(1)
                 }
             }
             .scaleEffect(hover ? 1.025 : 1)

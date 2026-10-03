@@ -59,6 +59,11 @@ final class MPVController: ObservableObject {
     private let queue = DispatchQueue(label: "nebula.mpv", qos: .userInitiated)
     private var lastErrorLines: [String] = []
     private var closed = false
+    private var engine: OpaquePointer? { closed ? nil : mpv }
+    /// Selection is settled after the download, unless a newer choice has already won.
+    private var subtitleChoice: UInt64 = 0
+    private var subtitleReply: UInt64 = 0
+    private var subtitleLoads: [UInt64: (url: String, choice: UInt64)] = [:]
     private let headless: Bool
     private let debug = ProcessInfo.processInfo.environment["NEBULA_MPV_DEBUG"] == "1"
 
@@ -108,7 +113,9 @@ final class MPVController: ObservableObject {
 
     /// Start a stream. Keys and headers apply to this file only.
     func load(url: String, startAt given: Double = 0, keys: [String: String] = [:], headers: [String: String] = [:]) {
-        guard mpv != nil else { return }
+        guard engine != nil else { return }
+        subtitleChoice &+= 1
+        subtitleLoads.removeAll()
         // a resume point is somebody else's number (the TV's, the sync server's): `Int(...)` of
         // an infinite or enormous one traps, so anything that is not a place in a film is 0
         let startAt = given.isFinite && given > 0 && given < 10_000_000 ? given : 0
@@ -136,6 +143,7 @@ final class MPVController: ObservableObject {
     /// A step through a live stream stays inside what the engine can reach: back only where it
     /// says it can seek, forward only as far back as the viewer stepped — the edge, no further.
     func seek(by given: Double) {
+        guard engine != nil else { return }
         var secs = given
         if isLive {
             guard seekable else { return }
@@ -153,6 +161,8 @@ final class MPVController: ObservableObject {
     func setSpeed(_ s: Double) { setDouble("speed", s) }
 
     func selectTrack(_ type: String, id: Int?) {
+        guard engine != nil else { return }
+        if type == "sub" { subtitleChoice &+= 1 }
         setProperty(type == "audio" ? "aid" : type == "video" ? "vid" : "sid", id.map(String.init) ?? "no")
     }
 
@@ -160,7 +170,25 @@ final class MPVController: ObservableObject {
     /// one is a download, and the synchronous call held the calling (main) thread until it was
     /// done — seconds of a frozen window with a few dozen languages.
     func addSubtitle(url: String, lang: String, title: String, select: Bool) {
-        commandAsync("sub-add", [url, select ? "select" : "auto", title, lang])
+        guard engine != nil else { return }
+        subtitleReply &+= 1
+        let reply = subtitleReply
+        if select { subtitleLoads[reply] = (url, subtitleChoice) }
+        if !commandAsync("sub-add", [url, "auto", title, lang], reply: reply) { subtitleLoads.removeValue(forKey: reply) }
+    }
+
+    private func subtitleLoaded(_ reply: UInt64, status: CInt) {
+        guard let load = subtitleLoads.removeValue(forKey: reply), status >= 0,
+              load.choice == subtitleChoice, engine != nil else { return }
+        let n = Int(string("track-list/count")) ?? 0
+        for i in 0..<n {
+            let p = "track-list/\(i)/"
+            if string(p + "type") == "sub", string(p + "external-filename") == load.url,
+               let id = Int(string(p + "id")) {
+                selectTrack("sub", id: id)
+                return
+            }
+        }
     }
 
     func setSubDelay(_ secs: Double) { setDouble("sub-delay", secs) }
@@ -181,6 +209,7 @@ final class MPVController: ObservableObject {
             return
         }
         closed = true
+        subtitleLoads.removeAll()
         mpv_set_wakeup_callback(h, nil, nil)
         mpv = nil
         queue.async {
@@ -198,49 +227,51 @@ final class MPVController: ObservableObject {
     }
 
     private func set(_ name: String, _ value: String) {
-        guard let h = mpv else { return }
+        guard let h = engine else { return }
         check(mpv_set_option_string(h, name, value))
     }
 
     private func setProperty(_ name: String, _ value: String) {
-        guard let h = mpv else { return }
+        guard let h = engine else { return }
         check(mpv_set_property_string(h, name, value))
     }
 
     private func setFlag(_ name: String, _ on: Bool) {
-        guard let h = mpv else { return }
+        guard let h = engine else { return }
         var v: CInt = on ? 1 : 0
         check(mpv_set_property(h, name, MPV_FORMAT_FLAG, &v))
     }
 
     private func setDouble(_ name: String, _ value: Double) {
-        guard let h = mpv else { return }
+        guard let h = engine else { return }
         var v = value
         check(mpv_set_property(h, name, MPV_FORMAT_DOUBLE, &v))
     }
 
     func string(_ name: String) -> String {
-        guard let h = mpv, let c = mpv_get_property_string(h, name) else { return "" }
+        guard let h = engine, let c = mpv_get_property_string(h, name) else { return "" }
         defer { mpv_free(c) }
         return String(cString: c)
     }
 
     private func command(_ name: String, _ args: [String]) {
-        guard let h = mpv else { return }
+        guard let h = engine else { return }
         var cargs: [UnsafePointer<CChar>?] = ([name] + args).map { UnsafePointer(strdup($0)) }
         cargs.append(nil)
         defer { for p in cargs { if let p = p { free(UnsafeMutablePointer(mutating: p)) } } }
         check(mpv_command(h, &cargs))
     }
 
-    /// Queue a command and return at once; the reply arrives as an event nobody needs. mpv
-    /// parses (copies) the arguments before this returns, so they can be freed here.
-    private func commandAsync(_ name: String, _ args: [String]) {
-        guard let h = mpv else { return }
+    /// Queue a command and return at once. mpv copies the arguments before this returns, so
+    /// they can be freed here; a subtitle's reply decides whether it may still be selected.
+    private func commandAsync(_ name: String, _ args: [String], reply: UInt64) -> Bool {
+        guard let h = engine else { return false }
         var cargs: [UnsafePointer<CChar>?] = ([name] + args).map { UnsafePointer(strdup($0)) }
         cargs.append(nil)
         defer { for p in cargs { if let p = p { free(UnsafeMutablePointer(mutating: p)) } } }
-        check(mpv_command_async(h, 0, &cargs))
+        let status = mpv_command_async(h, reply, &cargs)
+        check(status)
+        return status >= 0
     }
 
     private func readTracks() -> [MediaTrack] {
@@ -256,7 +287,7 @@ final class MPVController: ObservableObject {
     private func drain() {
         queue.async { [weak self] in
             guard let self = self else { return }
-            while let h = self.mpv, !self.closed {
+            while let h = self.engine {
                 guard let ev = mpv_wait_event(h, 0)?.pointee, ev.event_id != MPV_EVENT_NONE else { break }
                 self.handle(ev)
             }
@@ -303,6 +334,9 @@ final class MPVController: ObservableObject {
                 publish { $0.hwdec = s }
             default: break
             }
+        case MPV_EVENT_COMMAND_REPLY:
+            let reply = ev.reply_userdata, status = ev.error
+            publish { $0.subtitleLoaded(reply, status: status) }
         case MPV_EVENT_FILE_LOADED:
             let t = readTracks()
             publish { $0.loaded = true; $0.buffering = false; $0.tracks = t }
@@ -383,6 +417,16 @@ enum Lang {
         "ben": "Bengali", "bn": "Bengali", "urd": "Urdu", "ur": "Urdu", "per": "Persian", "fas": "Persian", "fa": "Persian",
         "bul": "Bulgarian", "bg": "Bulgarian", "hrv": "Croatian", "hr": "Croatian", "srp": "Serbian", "sr": "Serbian", "may": "Malay", "msa": "Malay", "ms": "Malay",
     ]
+
+    /// Track and add-on codes differ; keep one key for remembering and comparing a language.
+    static func key(_ code: String) -> String {
+        let c = code.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().replacingOccurrences(of: "_", with: "-")
+        if c == "pob" || c == "pt-br" || c == "por-br" { return "pt-br" }
+        let base = String(c.split(separator: "-").first ?? "")
+        guard base != "und" else { return "" }
+        guard let name = names[base] else { return base }
+        return names.first(where: { $0.key.count == 2 && $0.value == name })?.key ?? base
+    }
 
     /// A language the viewer can read; a code nobody knows comes back as it is, never as "Unknown".
     static func name(_ code: String) -> String {

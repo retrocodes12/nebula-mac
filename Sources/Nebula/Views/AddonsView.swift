@@ -49,7 +49,7 @@ struct AddonsView: View {
         .background(Theme.bg)
         .confirmationDialog("Remove \(removing?.name ?? "this add-on")?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } })) {
             Button("Remove", role: .destructive) {
-                if let r = removing { model.saveAddons(model.addons.filter { $0.manifestUrl != r.manifestUrl }); model.say("Removed \(r.name).") }
+                if let r = removing { model.removeAddon(r.manifestUrl); model.say("Removed \(r.name).") }
                 removing = nil
             }
         } message: { Text("Its catalogs and streams go with it. With a profile, it is removed from your other devices too.") }
@@ -72,13 +72,13 @@ struct AddonsView: View {
             rowMenu(a, i)
             #else
             HStack(spacing: 2) {
-                iconButton("chevron.up", "Move up", disabled: i == 0) { move(i, -1) }
-                iconButton("chevron.down", "Move down", disabled: i == model.addons.count - 1) { move(i, 1) }
+                iconButton("chevron.up", "Move up", disabled: i == 0) { move(a, -1) }
+                iconButton("chevron.down", "Move down", disabled: i == model.addons.count - 1) { move(a, 1) }
                 iconButton("trash", "Remove", disabled: false) { removing = a }
             }
             #endif
             Toggle("", isOn: Binding(get: { a.enabled }, set: { on in
-                var next = model.addons; next[i].enabled = on; model.saveAddons(next)
+                model.setAddonEnabled(on, manifestUrl: a.manifestUrl)
             }))
             .toggleStyle(.switch).labelsHidden().controlSize(.small)
         }
@@ -99,9 +99,9 @@ struct AddonsView: View {
     /// iOS list keeps a row's secondary actions.
     private func rowMenu(_ a: Addon, _ i: Int) -> some View {
         Menu {
-            Button { move(i, -1) } label: { Label("Move up", systemImage: "chevron.up") }
+            Button { move(a, -1) } label: { Label("Move up", systemImage: "chevron.up") }
                 .disabled(i == 0)
-            Button { move(i, 1) } label: { Label("Move down", systemImage: "chevron.down") }
+            Button { move(a, 1) } label: { Label("Move down", systemImage: "chevron.down") }
                 .disabled(i == model.addons.count - 1)
             Button(role: .destructive) { removing = a } label: { Label("Remove", systemImage: "trash") }
         } label: {
@@ -112,10 +112,8 @@ struct AddonsView: View {
     }
     #endif
 
-    private func move(_ i: Int, _ d: Int) {
-        var next = model.addons
-        next.swapAt(i, i + d)
-        model.saveAddons(next, reordered: true)
+    private func move(_ a: Addon, _ d: Int) {
+        model.moveAddon(a.manifestUrl, by: d)
     }
 
     private func install() {

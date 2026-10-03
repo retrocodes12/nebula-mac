@@ -42,6 +42,9 @@ public actor Cloud {
     let platform: String
 
     private var pushTasks: [String: Task<Void, Never>] = [:]
+    private var writes: [String: (id: UUID, task: Task<Void, Never>)] = [:]
+    private var requests: [UUID: Task<(Data, Int), Error>] = [:]
+    private var generation: UInt64 = 0
     /// How many times each key has changed. A push only clears the dirty mark when nothing
     /// changed while it was on the wire — otherwise that change was never sent and a flush at
     /// quit would find nothing to send.
@@ -94,6 +97,8 @@ public actor Cloud {
     // MARK: HTTP
 
     public func api(_ method: String, _ path: String, _ body: JSONObject? = nil, auth: Bool = true) async throws -> JSONObject {
+        try Task.checkCancellation()
+        let session = generation
         guard let url = URL(string: base + path) else { throw HTTPFailure(code: 0, error: "bad address") }
         var r = URLRequest(url: url)
         r.httpMethod = method
@@ -102,7 +107,14 @@ public actor Cloud {
         let signed = auth && linked
         if signed { r.setValue("Bearer \(cred.str("gid")).\(cred.str("token"))", forHTTPHeaderField: "Authorization") }
         if method != "GET" { r.httpBody = JSON.data(body ?? [:]) }
-        let (data, code) = try await transport.send(r)
+        let id = UUID(), request = r, transport = self.transport
+        let task = Task { try await transport.send(request) }
+        requests[id] = task
+        defer { requests[id] = nil }
+        let (data, code) = try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: { task.cancel() }
+        guard current(session) else { throw CancellationError() }
         let j = JSON.object(data) ?? [:]
         guard (200...299).contains(code) else {
             // a dead credential: the device was signed out from elsewhere, or the profile is gone
@@ -112,8 +124,21 @@ public actor Cloud {
         return j
     }
 
+    private func current(_ session: UInt64) -> Bool { session == generation && !Task.isCancelled }
+
+    private func switchSession() {
+        generation &+= 1
+        for task in pushTasks.values { task.cancel() }
+        for write in writes.values { write.task.cancel() }
+        for task in requests.values { task.cancel() }
+        pushTasks.removeAll(); writes.removeAll(); requests.removeAll(); changes.removeAll()
+        lastPullAt = 0
+    }
+
     /// Take a credential set {gid, token, profile} as this device's identity.
     func adopt(_ r: JSONObject, fresh: Bool) async {
+        switchSession()
+        let session = generation
         store.setObject("cloud_link", ["gid": r.str("gid"), "token": r.str("token")])
         store.setObject("cloud_revs", [:])
         store.setObject("cloud_dirty", [:])
@@ -121,7 +146,10 @@ public actor Cloud {
         lastPullAt = 0
         if fresh {
             // a brand-new profile: what this device holds IS the profile's data
-            for k in Cloud.syncKeys where hasContent(k) { await pushKey(k) }
+            for k in Cloud.syncKeys where hasContent(k) {
+                guard current(session) else { return }
+                await pushKey(k, session: session)
+            }
         } else {
             // merge; newer local records push back on their own
             await pullAll(force: true)
@@ -130,6 +158,7 @@ public actor Cloud {
 
     /// Forget the credential on this device only; nothing local is deleted.
     public func forget() {
+        switchSession()
         store.set("cloud_link", nil)
         store.setObject("cloud_revs", [:])
         store.setObject("cloud_dirty", [:])
@@ -152,26 +181,55 @@ public actor Cloud {
         store.setObject("cloud_dirty", d)
         pushTasks[key]?.cancel()
         let wait: UInt64 = key == "progress" ? 20_000_000_000 : 2_000_000_000   // progress churns every few seconds
+        let session = generation
         pushTasks[key] = Task { [weak self] in
             try? await Task.sleep(nanoseconds: wait)
-            if Task.isCancelled { return }
-            await self?.pushKey(key)
+            guard let self = self, await self.current(session) else { return }
+            await self.pushKey(key, session: session)
         }
     }
 
     /// Push every dirty doc now and wait — the app is closing, or about to let go of its credential.
     public func flush() async {
         guard linked else { return }
+        let session = generation
         for k in store.object("cloud_dirty").keys {
+            guard current(session) else { return }
             pushTasks[k]?.cancel()
-            await pushKey(k)
+            await pushKey(k, session: session)
         }
     }
 
-    private func pushKey(_ key: String) async {
+    private func pushKey(_ key: String, session: UInt64) async {
+        guard current(session), linked else { return }
+        let previous = writes[key]?.task, id = UUID()
+        let task = Task<Void, Never> { [weak self] in
+            if let previous = previous { await previous.value }
+            await self?.pushDocument(key, session: session)
+        }
+        writes[key] = (id, task)
+        await task.value
+        guard current(session) else { return }
+        if writes[key]?.id == id { writes[key] = nil }
+    }
+
+    private func pushDocument(_ key: String, session: UInt64) async {
+        guard current(session), linked,
+              let keys = (try? await api("GET", "/v1/kv"))?.obj("keys"), current(session) else { return }
+        if let meta = keys.obj(key), store.object("cloud_revs").optInt(key) != meta.int("rev") {
+            guard let rec = try? await api("GET", "/v1/kv/\(key)"), current(session),
+                  let remote = JSON.object(rec.str("v")) else { return }
+            applying = true
+            let (changed, _) = merge(key, remote)
+            applying = false
+            var revs = store.object("cloud_revs"); revs[key] = rec.int("rev")
+            store.setObject("cloud_revs", revs)
+            if changed { onApplied?([key]) }
+        }
         let seen = changes[key, default: 0]
-        guard linked, let v = docFor(key) else { return }
-        guard let r = try? await api("PUT", "/v1/kv/\(key)", ["v": v]) else { return }
+        guard current(session), let v = docFor(key) else { return }
+        // Fetch/merge narrows the race; only a server-side conditional PUT can make it atomic.
+        guard let r = try? await api("PUT", "/v1/kv/\(key)", ["v": v]), current(session) else { return }
         var revs = store.object("cloud_revs"); revs[key] = r.int("rev")
         store.setObject("cloud_revs", revs)
         // the actor let other calls in during the PUT: a change made then is still unsent
@@ -182,7 +240,7 @@ public actor Cloud {
 
     private func hasContent(_ key: String) -> Bool {
         switch key {
-        case "addons": return !addons.all().isEmpty
+        case "addons": return !addons.all().isEmpty || !(addons.syncDoc().obj("removed") ?? [:]).isEmpty
         case "progress": return !progress.all().isEmpty
         case "library": return !library.doc().isEmpty
         default: return false
@@ -193,30 +251,33 @@ public actor Cloud {
 
     public func pullAll(force: Bool = false) async {
         guard linked else { return }
+        let session = generation
         let now = nowMs()
         if !force && now - lastPullAt < 45_000 { return }
         lastPullAt = now
         var applied = Set<String>()
-        guard let keys = (try? await api("GET", "/v1/kv"))?.obj("keys") else { return }
+        guard let keys = (try? await api("GET", "/v1/kv"))?.obj("keys"), current(session) else { return }
         for key in Cloud.syncKeys {
+            guard current(session) else { return }
             guard let meta = keys.obj(key) else {
-                if hasContent(key) { await pushKey(key) }
+                if hasContent(key) { await pushKey(key, session: session) }
                 continue
             }
             if store.object("cloud_revs").optInt(key) == meta.int("rev") {
-                if store.object("cloud_dirty")[key] != nil { await pushKey(key) }
+                if store.object("cloud_dirty")[key] != nil { await pushKey(key, session: session) }
                 continue
             }
-            guard let rec = try? await api("GET", "/v1/kv/\(key)"), let remote = JSON.object(rec.str("v")) else { continue }
+            guard let rec = try? await api("GET", "/v1/kv/\(key)"), current(session),
+                  let remote = JSON.object(rec.str("v")) else { continue }
             applying = true
             let (changed, localNewer) = merge(key, remote)
             applying = false
             var revs = store.object("cloud_revs"); revs[key] = rec.int("rev")
             store.setObject("cloud_revs", revs)
             if changed { applied.insert(key) }
-            if localNewer { await pushKey(key) }
+            if localNewer { await pushKey(key, session: session) }
         }
-        if !applied.isEmpty { onApplied?(applied) }
+        if current(session), !applied.isEmpty { onApplied?(applied) }
     }
 
     func merge(_ key: String, _ remote: JSONObject) -> (changed: Bool, localNewer: Bool) {
@@ -265,11 +326,15 @@ public actor Cloud {
         var changed = false, localNewer = false
         let rl = remote.obj("list") ?? [:], rr = remote.obj("removed") ?? [:]
         let have = Set(arr.map(\.manifestUrl))
+        // Keep removals even for an add-on this device has never installed.
+        for u in rr.keys {
+            if removed[u] == nil || rr.int64(u) > removed.int64(u) { removed[u] = rr.int64(u) }
+        }
         for (u, v) in rl {
             guard let r = v as? JSONObject else { continue }
             let rAt = r.int64("at")
             if have.contains(u) {
-                if at.int64(u) > rAt { localNewer = true } else if rAt > at.int64(u) { at[u] = rAt }
+                if rAt > at.int64(u) { at[u] = rAt }
                 continue
             }
             // adopt unless WE removed it more recently than they added it
@@ -278,18 +343,25 @@ public actor Cloud {
                 at[u] = rAt > 0 ? rAt : nowMs()
                 removed[u] = nil
                 changed = true
-            } else { localNewer = true }
+            }
         }
-        for u in rr.keys {
+        for u in removed.keys {
             if let idx = arr.firstIndex(where: { $0.manifestUrl == u }) {
-                if rr.int64(u) > at.int64(u) {
-                    arr.remove(at: idx); removed[u] = rr.int64(u); at[u] = nil
+                if removed.int64(u) > at.int64(u) {
+                    arr.remove(at: idx); at[u] = nil
                     changed = true
-                } else { localNewer = true }
-            } else if removed.int64(u) > rr.int64(u) { localNewer = true }
+                } else { removed[u] = nil }
+            }
         }
-        for a in arr where rl[a.manifestUrl] == nil { localNewer = true }
-        for u in removed.keys where rr[u] == nil { localNewer = true }
+        // compare after clearing superseded removals, so the settled document needs no push
+        for a in arr {
+            let u = a.manifestUrl
+            if rl.obj(u) == nil || at.int64(u) > (rl.obj(u)?.int64("at") ?? 0) { localNewer = true }
+        }
+        for u in removed.keys {
+            if rr[u] == nil || removed.int64(u) > rr.int64(u) || rl[u] != nil { localNewer = true }
+        }
+        for u in rr.keys where removed[u] == nil { localNewer = true }
         // Ranking, newest wins. Add-ons the sender did not know about keep their place at the end.
         let ro = remote.strs("order") ?? [], roAt = remote.int64("orderAt")
         if roAt > s.int64("orderAt") && !ro.isEmpty {
@@ -377,9 +449,12 @@ public actor Cloud {
         let handle = Cloud.cleanHandle(raw)
         if !Cloud.handleOk(handle) { return handle.isEmpty ? "Enter your @handle." : "Handles are 3–20 letters, numbers or underscores." }
         if password.isEmpty { return "Enter your password." }
+        let session = generation
         do {
             let r = try await api("POST", "/v1/profile/signin", ["handle": handle, "password": password, "device": deviceInfo], auth: false)
+            guard current(session) else { throw CancellationError() }
             await adopt(r, fresh: false)
+            guard current(session &+ 1), linked else { throw CancellationError() }
             return nil
         } catch { return Cloud.errorText(error) }
     }
@@ -389,23 +464,30 @@ public actor Cloud {
         let handle = Cloud.cleanHandle(raw)
         if !Cloud.handleOk(handle) { return (nil, "Handles are 3–20 letters, numbers or underscores.") }
         if password.count < 8 { return (nil, "Passwords are at least 8 characters.") }
+        let session = generation
         do {
             let r = try await api("POST", "/v1/profile", ["handle": handle, "name": name.trimmingCharacters(in: .whitespaces), "password": password, "device": deviceInfo], auth: false)
+            guard current(session) else { throw CancellationError() }
             await adopt(r, fresh: true)
+            guard current(session &+ 1), linked else { throw CancellationError() }
             return (r.text("recovery"), nil)
         } catch { return (nil, Cloud.errorText(error)) }
     }
 
     /// Sign out here only; the server forgets this device's token, nothing local is deleted.
     public func signOut() async {
+        let session = generation
         await flush()
+        guard current(session) else { return }
         _ = try? await api("POST", "/v1/profile/signout", [:])
+        guard current(session) else { return }
         forget()
     }
 
     /// The profile and its devices; nil when the call failed.
     public func refreshProfile() async -> [DeviceRec]? {
-        guard linked, let r = try? await api("GET", "/v1/profile/me") else { return nil }
+        let session = generation
+        guard linked, let r = try? await api("GET", "/v1/profile/me"), current(session) else { return nil }
         setProfile(r.bool("on") ? r : nil)
         return r.objs("devices").map {
             DeviceRec(id: $0.str("id"), name: $0.text("name") ?? "Device", plat: $0.str("plat"), at: $0.int64("at"), seen: $0.int64("seen"), me: $0.bool("me"))
@@ -413,15 +495,22 @@ public actor Cloud {
     }
 
     public func removeDevice(_ id: String) async -> String? {
-        do { _ = try await api("DELETE", "/v1/profile/device/\(id)"); return nil } catch { return Cloud.errorText(error) }
+        let session = generation
+        do {
+            _ = try await api("DELETE", "/v1/profile/device/\(id)")
+            guard current(session) else { throw CancellationError() }
+            return nil
+        } catch { return Cloud.errorText(error) }
     }
 
     /// Approve the code a TV is showing. Returns (device name, nil) or (nil, error).
     public func approveTv(code raw: String) async -> (String?, String?) {
         let code = raw.uppercased().filter { $0.isASCII && ($0.isLetter || $0.isNumber) }
         if code.count != 6 { return (nil, "Enter the 6-character code from the TV.") }
+        let session = generation
         do {
             let r = try await api("POST", "/v1/tv/approve", ["code": code])
+            guard current(session) else { throw CancellationError() }
             return (r.obj("device")?.text("name") ?? "The TV", nil)
         } catch { return (nil, Cloud.errorText(error)) }
     }

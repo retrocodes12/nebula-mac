@@ -177,8 +177,8 @@ struct DiscoverSection: View {
                 }
                 if pager.loading { ProgressView().controlSize(.small).frame(maxWidth: .infinity).padding() }
                 else if pager.failed {
-                    EmptyState(icon: "wifi.slash", title: "This catalog did not answer", detail: "Check the connection, or try again in a moment.",
-                               actionTitle: "Try again", action: { Task { await pager.reset(addon: cur.addon, catalog: cur.catalog, genre: genre, stremio: model.stremio) } })
+                    EmptyState(icon: "wifi.slash", title: pager.items.isEmpty ? "This catalog did not answer" : "More titles could not be loaded", detail: "Check the connection, or try again in a moment.",
+                               actionTitle: "Try again", action: { Task { await pager.more(addon: cur.addon, catalog: cur.catalog, genre: genre, stremio: model.stremio, retry: true) } })
                 }
                 else if pager.items.isEmpty { EmptyState(icon: "square.grid.2x2", title: "Nothing here.", detail: "Pick another catalog or genre.") }
             } else if ready && unreachable {
@@ -231,7 +231,9 @@ struct DiscoverSection: View {
         ready = true
         // the pick in hand stays when it is still on offer; a grid that failed asks again
         if let cur = current, let same = opts.first(where: { key($0) == key(cur) }) {
-            if pager.failed || (!changed && pager.items.isEmpty && !pager.loading) {
+            if pager.failed {
+                await pager.more(addon: same.addon, catalog: same.catalog, genre: genre, stremio: model.stremio, retry: true)
+            } else if !changed && pager.items.isEmpty && !pager.loading {
                 await pager.reset(addon: same.addon, catalog: same.catalog, genre: genre, stremio: model.stremio)
             }
             return

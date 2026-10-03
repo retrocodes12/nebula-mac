@@ -17,17 +17,23 @@ enum PlaybackRules {
     /// The address to hand the engine and the keys to hand it with. Protected DASH goes through
     /// the loopback manifest cache (ManifestProxy says why), and the same fetch gives the text
     /// the licence address is read from.
-    static func source(for stream: StreamItem, maxHeight: Int, stremio: Stremio) async -> (address: String, keys: [String: String]) {
+    static func source(for stream: StreamItem, maxHeight: Int, stremio: Stremio) async -> (address: String, keys: [String: String], token: String?) {
         var keys = stream.clearKeys
         var address = stream.url
-        guard ClearKey.looksLikeDash(stream.url) else { return (address, keys) }
-        if let m = await ManifestProxy.shared.open(stream.url, headers: stream.headers, maxHeight: maxHeight) {
-            address = m.address
-            if keys.isEmpty { keys = await ClearKey.resolve(xml: m.xml, using: stremio) }
-        } else if keys.isEmpty {
-            keys = await ClearKey.resolve(manifestUrl: stream.url, using: stremio)
+        var token: String?
+        guard !Task.isCancelled, ClearKey.looksLikeDash(stream.url) else { return (address, keys, nil) }
+        var headers = stream.headers
+        if !headers.keys.contains(where: { $0.lowercased() == "user-agent" }) { headers["User-Agent"] = MPVController.userAgent }
+        if let m = await ManifestProxy.shared.open(stream.url, headers: headers, maxHeight: maxHeight) {
+            address = m.address; token = m.token
+            if keys.isEmpty && !Task.isCancelled {
+                keys = await ClearKey.resolve(xml: m.xml, manifestUrl: m.base, headers: headers, headerOrigin: stream.url, using: stremio)
+            }
+        } else if !Task.isCancelled && keys.isEmpty {
+            keys = await ClearKey.resolve(manifestUrl: stream.url, headers: headers, using: stremio)
         }
-        return (address, keys)
+        if Task.isCancelled { ManifestProxy.shared.release(token); token = nil }
+        return (address, keys, token)
     }
 
     /// How many captions go in: the viewer's own language gets room to choose, every other
@@ -39,23 +45,25 @@ enum PlaybackRules {
     /// the menu. The viewer's language is counted first, so the total cap never squeezes it out.
     static func subtitlePlan(stream: StreamItem, addon: [SubTrack], want: String) -> [SubPick] {
         let all = stream.subtitles + addon
-        func wanted(_ s: SubTrack) -> Bool { !want.isEmpty && s.lang == want }
+        let language = Lang.key(want)
+        func wanted(_ s: SubTrack) -> Bool { !language.isEmpty && Lang.key(s.lang) == language }
         var room: [String: Int] = [:]
         var keep = Set<Int>()
         let byPriority = all.indices.sorted { a, b in (wanted(all[a]) ? 0 : 1, a) < (wanted(all[b]) ? 0 : 1, b) }
         for i in byPriority where keep.count < subsTotal {
-            let s = all[i], n = room[s.lang] ?? 0
+            let s = all[i], key = Lang.key(s.lang)
+            let n = room[key] ?? 0
             if n >= (wanted(s) ? subsWanted : subsPerOther) { continue }
-            room[s.lang] = n + 1
+            room[key] = n + 1
             keep.insert(i)
         }
         var perLang: [String: Int] = [:]
         var picked = false
         var out: [SubPick] = []
         for i in all.indices where keep.contains(i) {
-            let s = all[i]
-            let n = (perLang[s.lang] ?? 0) + 1
-            perLang[s.lang] = n
+            let s = all[i], key = Lang.key(s.lang)
+            let n = (perLang[key] ?? 0) + 1
+            perLang[key] = n
             let pick = !picked && wanted(s)
             if pick { picked = true }
             let name = Lang.name(s.lang)
@@ -75,6 +83,9 @@ enum PlaybackRules {
         private(set) var addonSubs: [SubTrack]?
         /// Everything that was going to be attached has been.
         private(set) var settled = false
+        private(set) var handPicked = false
+
+        mutating func picked() { handPicked = true }
 
         /// The file is open. True when the captions should go in now.
         mutating func fileLoaded() -> Bool { fileOpen = true; return take() }
@@ -93,13 +104,21 @@ enum PlaybackRules {
         }
     }
 
-    /// Put the plan into the engine. With nothing external to add, the file's own tracks are
-    /// left exactly as the engine chose them.
+    /// A remembered choice applies even without add-on captions; unset keeps the engine's default.
+    static func selectSubtitles(want: String, chosen: Bool, to mpv: MPVController) {
+        guard chosen else { return }
+        let language = Lang.key(want)
+        if want.isEmpty { mpv.selectTrack("sub", id: nil) }
+        else if !language.isEmpty, let t = mpv.tracks.first(where: { $0.type == "sub" && Lang.key($0.lang) == language }), !t.selected {
+            mpv.selectTrack("sub", id: t.id)
+        }
+    }
+
+    /// Late captions can fill the menu, but a choice already made in the player wins.
     static func attachCaptions(_ gate: CaptionGate, stream: StreamItem, want: String, to mpv: MPVController) {
         let plan = subtitlePlan(stream: stream, addon: gate.addonSubs ?? [], want: want)
-        if plan.isEmpty { return }
-        for p in plan { mpv.addSubtitle(url: p.url, lang: p.lang, title: p.title, select: p.select) }
-        if want.isEmpty { mpv.selectTrack("sub", id: nil) }
+        let selected = mpv.tracks.contains { $0.type == "sub" && ($0.selected || !$0.external) && Lang.key($0.lang) == Lang.key(want) }
+        for p in plan { mpv.addSubtitle(url: p.url, lang: p.lang, title: p.title, select: p.select && !gate.handPicked && !selected) }
     }
 
     /// Whether the engine's end is the film's end. A stream that dies part-way — a dropped
@@ -110,6 +129,7 @@ enum PlaybackRules {
     }
 
     static let cutShort = "The stream stopped before the end. Try again, or pick another stream."
+    static let liveStopped = "The live stream stopped. Try again to reconnect, or pick another stream."
 
     /// The resume point, carrying what a Continue watching card needs to draw itself.
     static func record(target: StreamsTarget, pos: Double, dur: Double) -> ProgressRec {

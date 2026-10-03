@@ -26,24 +26,27 @@ final class ManifestProxy: @unchecked Sendable {
     private var lastPort: UInt16 = 0
     private var entries: [String: Entry] = [:]
     private let maxAge: TimeInterval = 2.5
-    private let session: URLSession = {
-        let c = URLSessionConfiguration.ephemeral
-        c.timeoutIntervalForRequest = 20
-        c.requestCachePolicy = .reloadIgnoringLocalCacheData
-        return URLSession(configuration: c)
-    }()
+    private let transport = URLSessionTransport(timeout: 20)
 
     /// Fetch and prepare a manifest, and return the loopback address to play plus the ORIGINAL
     /// text (the licence address is read from it). nil = play the source directly.
-    func open(_ source: String, headers: [String: String], maxHeight: Int) async -> (address: String, xml: String)? {
-        guard await ensureListening(), let (xml, base) = await fetch(source, headers: headers) else { return nil }
+    func open(_ source: String, headers: [String: String], maxHeight: Int) async -> (address: String, xml: String, base: String, token: String)? {
+        guard !Task.isCancelled, await ensureListening(), !Task.isCancelled,
+              let (xml, base) = await fetch(source, headers: headers), !Task.isCancelled else { return nil }
         let token = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
         let body = Data(DashManifest.prepare(xml, manifestUrl: base, maxHeight: maxHeight).utf8)
-        queue.sync {
-            // one film at a time: what came before is never asked for again
-            entries = [token: Entry(source: source, headers: headers, maxHeight: maxHeight, body: body, fetchedAt: Date())]
+        let address = queue.sync { () -> String in
+            // a player on its way out must not remove the next player's live manifest
+            entries[token] = Entry(source: source, headers: headers, maxHeight: maxHeight, body: body, fetchedAt: Date())
+            return "http://127.0.0.1:\(port)/m/\(token).mpd"
         }
-        return ("http://127.0.0.1:\(port)/m/\(token).mpd", xml)
+        if Task.isCancelled { release(token); return nil }
+        return (address, xml, base, token)
+    }
+
+    func release(_ token: String?) {
+        guard let token = token else { return }
+        queue.sync { _ = entries.removeValue(forKey: token) }
     }
 
     /// The manifest's text and the address it finally came from. A source that redirects
@@ -54,9 +57,9 @@ final class ManifestProxy: @unchecked Sendable {
         var r = Net.addonRequest(url)
         r.setValue(MPVController.userAgent, forHTTPHeaderField: "User-Agent")
         for (k, v) in headers { r.setValue(v, forHTTPHeaderField: k) }
-        guard let (data, resp) = try? await session.data(for: r), let http = resp as? HTTPURLResponse, (200...299).contains(http.statusCode),
+        guard let (data, code, finalURL) = try? await transport.sendWithURL(r), (200...299).contains(code),
               let xml = String(data: data, encoding: .utf8), xml.range(of: "<MPD", options: .caseInsensitive) != nil else { return nil }
-        return (xml, http.url?.absoluteString ?? source)
+        return (xml, finalURL.absoluteString)
     }
 
     private func ensureListening() async -> Bool {

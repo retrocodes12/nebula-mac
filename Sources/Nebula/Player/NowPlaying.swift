@@ -47,19 +47,20 @@ final class NowPlaying {
         self.subtitle = subtitle
         NowPlaying.owner = id
         let c = MPRemoteCommandCenter.shared()
-        // the handlers touch only the engine, whose calls are safe from any thread
-        on(c.playCommand) { [weak mpv] _ in mpv?.setPaused(false); return .success }
-        on(c.pauseCommand) { [weak mpv] _ in mpv?.setPaused(true); return .success }
-        on(c.togglePlayPauseCommand) { [weak mpv] _ in mpv?.togglePause(); return .success }
+        // system commands can arrive off-main; keep them in line with the player's teardown
+        on(c.playCommand) { [weak mpv] _ in NowPlaying.onMain { mpv?.setPaused(false) }; return .success }
+        on(c.pauseCommand) { [weak mpv] _ in NowPlaying.onMain { mpv?.setPaused(true) }; return .success }
+        on(c.togglePlayPauseCommand) { [weak mpv] _ in NowPlaying.onMain { mpv?.togglePause() }; return .success }
         on(c.changePlaybackPositionCommand) { [weak mpv] e in
             guard let e = e as? MPChangePlaybackPositionCommandEvent else { return .commandFailed }
-            mpv?.seek(to: e.positionTime)
+            let at = e.positionTime
+            NowPlaying.onMain { mpv?.seek(to: at) }
             return .success
         }
         c.skipForwardCommand.preferredIntervals = [NSNumber(value: step)]
         c.skipBackwardCommand.preferredIntervals = [NSNumber(value: step)]
-        on(c.skipForwardCommand) { [weak mpv] _ in mpv?.seek(by: step); return .success }
-        on(c.skipBackwardCommand) { [weak mpv] _ in mpv?.seek(by: -step); return .success }
+        on(c.skipForwardCommand) { [weak mpv] _ in NowPlaying.onMain { mpv?.seek(by: step) }; return .success }
+        on(c.skipBackwardCommand) { [weak mpv] _ in NowPlaying.onMain { mpv?.seek(by: -step) }; return .success }
 
         // every change the engine publishes (on the main queue) — delivered a turn later, once
         // the new value is in place: @Published announces a change before it makes it
@@ -80,6 +81,11 @@ final class NowPlaying {
     /// and a closure formed in here would carry the main actor's isolation with it.
     nonisolated private static func artwork(_ img: PlatformImage) -> MPMediaItemArtwork {
         MPMediaItemArtwork(boundsSize: img.size) { _ in img }
+    }
+
+    nonisolated private static func onMain(_ action: @escaping @Sendable () -> Void) {
+        if Thread.isMainThread { action() }
+        else { DispatchQueue.main.async(execute: action) }
     }
 
     private func on(_ cmd: MPRemoteCommand, _ handler: @escaping @Sendable (MPRemoteCommandEvent) -> MPRemoteCommandHandlerStatus) {

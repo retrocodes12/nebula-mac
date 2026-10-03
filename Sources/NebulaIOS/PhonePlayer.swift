@@ -8,6 +8,7 @@ import NebulaCore
 /// next episode are `PlaybackRules` — the same ones the Mac uses. What is written here is only
 /// what a finger needs: tap to wake, double tap a side to skip, drag the scrubber, and sheets
 /// instead of the window's hovering panels.
+@MainActor
 struct PhonePlayer: View {
     @EnvironmentObject var model: AppModel
     let request: PlayRequest
@@ -17,6 +18,11 @@ struct PhonePlayer: View {
     @State private var sheet: PlayerSheet?
     @State private var scrubbing: Double?
     @State private var captions = PlaybackRules.CaptionGate()
+    @State private var sourceTask: Task<Void, Never>?
+    @State private var subtitleTask: Task<Void, Never>?
+    @State private var nextTask: Task<Void, Never>?
+    @State private var manifestToken: String?
+    @State private var finished = false
     /// What the engine was handed, so Try again can hand it the same.
     @State private var resolved: String?
     @State private var resolvedKeys: [String: String] = [:]
@@ -73,7 +79,8 @@ struct PhonePlayer: View {
         .statusBarHidden(true)
         .persistentSystemOverlays(.hidden)
         .sheet(item: $sheet) { s in
-            PlayerSheetView(kind: s, mpv: mpv, subsAdded: captions.settled, infoRows: infoRows, prefs: model.prefs)
+            PlayerSheetView(kind: s, mpv: mpv, subsAdded: captions.settled, infoRows: infoRows, prefs: model.prefs,
+                            onSubtitlePick: { captions.picked() })
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
                 .preferredColorScheme(.dark)
@@ -209,7 +216,8 @@ struct PhonePlayer: View {
                     .opacity(mpv.canStepBack ? 1 : 0.3)
                 GlassCircle(icon: mpv.ended ? "arrow.counterclockwise" : mpv.paused ? "play.fill" : "pause.fill",
                             label: mpv.paused ? "Play" : "Pause", size: 76) {
-                    if mpv.ended { mpv.seek(to: 0); mpv.setPaused(false) } else { mpv.togglePause() }
+                    if mpv.ended && mpv.isLive { retry() }
+                    else if mpv.ended { mpv.seek(to: 0); mpv.setPaused(false) } else { mpv.togglePause() }
                     wake()
                 }
                 GlassCircle(icon: "goforward.\(stepIcon)", label: "Forward \(model.prefs.seekStep) seconds", size: 52) { mpv.seek(by: step); wake() }
@@ -349,6 +357,7 @@ struct PhonePlayer: View {
     // MARK: life cycle — the Mac's
 
     private func start() {
+        guard sourceTask == nil, !finished, model.player?.id == request.id else { return }
         // PhoneRoot takes the session when a player opens; asking again here is harmless and
         // makes sure the session is up before the engine opens its output
         Audio.begin()
@@ -361,25 +370,30 @@ struct PhonePlayer: View {
         // an onChange does not fire for the value a view starts with, and this one starts true
         awakeNow(wantsAwake)
         let s = request.stream
-        Task {
+        sourceTask = Task {
             let got = await PlaybackRules.source(for: s, maxHeight: model.prefs.maxHeight, stremio: model.stremio)
+            guard !Task.isCancelled, !finished, model.player?.id == request.id else { ManifestProxy.shared.release(got.token); return }
+            manifestToken = got.token
             protected = !got.keys.isEmpty
             resolved = got.address; resolvedKeys = got.keys
             mpv.load(url: got.address, startAt: request.startAt, keys: got.keys, headers: s.headers)
         }
-        Task {
+        subtitleTask = Task {
             let t = request.target
             let subs = await model.addonSubtitles(type: t.type, id: t.id)
+            guard !Task.isCancelled, !finished, model.player?.id == request.id else { return }
             if captions.addonsAnswered(subs) { attachSubs() }
         }
         wake()
     }
 
     private func loadedNow() {
+        guard !finished, model.player?.id == request.id else { return }
         if UIApplication.shared.applicationState == .background { mpv.setVideo(false) }
+        if !captions.handPicked { PlaybackRules.selectSubtitles(want: model.prefs.subLang, chosen: model.prefs.hasSubLang, to: mpv) }
         if captions.fileLoaded() { attachSubs() }
-        let want = model.prefs.audioLang
-        if !want.isEmpty, let t = mpv.tracks.first(where: { $0.type == "audio" && $0.lang == want }), !t.selected {
+        let want = Lang.key(model.prefs.audioLang)
+        if !want.isEmpty, let t = mpv.tracks.first(where: { $0.type == "audio" && Lang.key($0.lang) == want }), !t.selected {
             mpv.selectTrack("audio", id: t.id)
         }
     }
@@ -401,7 +415,8 @@ struct PhonePlayer: View {
     }
 
     private func reachedEnd() {
-        guard !mpv.isLive else { return }
+        guard !finished, model.player?.id == request.id else { return }
+        guard !mpv.isLive else { mpv.failure = PlaybackRules.liveStopped; return }
         guard PlaybackRules.reachedTheEnd(pos: mpv.timePos, dur: mpv.duration) else {
             // the connection went, not the film: keep the place and say so
             save()
@@ -413,14 +428,15 @@ struct PhonePlayer: View {
     }
 
     private func playNext(_ n: Episode) {
-        guard !nextBusy else { return }
+        guard !nextBusy, !finished, model.player?.id == request.id else { return }
         nextBusy = true
         var target = request.target
         target.id = n.id
         target.episode = n
         let group = request.stream.bingeGroup, origin = request.streamAddon
-        Task {
+        nextTask = Task {
             let found = await PlaybackRules.nextStream(origin: origin, type: target.type, id: n.id, bingeGroup: group, stremio: model.stremio)
+            guard !Task.isCancelled, !finished, model.player?.id == request.id else { return }
             nextBusy = false
             if let f = found {
                 save()
@@ -436,14 +452,18 @@ struct PhonePlayer: View {
     /// resolved afresh, not replayed: protected DASH plays through the loopback manifest cache,
     /// and the address handed out before may name a port that listener has since given up.
     private func retry() {
-        guard resolved != nil, !retrying else { return }
+        guard resolved != nil, !retrying, !finished, model.player?.id == request.id else { return }
         let at = mpv.isLive ? 0 : max(0, mpv.timePos - 2)
         retrying = true
         mpv.failure = nil; mpv.buffering = true
         captions.reopened()
         let s = request.stream
-        Task {
+        sourceTask?.cancel()
+        sourceTask = Task {
             let got = await PlaybackRules.source(for: s, maxHeight: model.prefs.maxHeight, stremio: model.stremio)
+            guard !Task.isCancelled, !finished, model.player?.id == request.id else { ManifestProxy.shared.release(got.token); return }
+            ManifestProxy.shared.release(manifestToken)
+            manifestToken = got.token
             let keys = got.keys.isEmpty ? resolvedKeys : got.keys     // a licence that did not answer this time
             resolved = got.address; resolvedKeys = keys
             retrying = false
@@ -453,6 +473,11 @@ struct PhonePlayer: View {
     }
 
     private func finish() {
+        guard !finished else { return }
+        finished = true
+        sourceTask?.cancel(); subtitleTask?.cancel(); nextTask?.cancel()
+        ManifestProxy.shared.release(manifestToken)
+        manifestToken = nil
         save()
         hideTask?.cancel()
         flashTask?.cancel()
@@ -465,11 +490,16 @@ struct PhonePlayer: View {
         Task { await model.cloud.flush() }
     }
 
-    private func close() { model.player = nil }
+    private func close() {
+        guard model.player?.id == request.id else { return }
+        finish()
+        model.player = nil
+    }
 
     /// Show the chrome, then let it go after three quiet seconds. A sheet, a pause or a failure
     /// keeps it up — nothing should vanish under a finger that is still deciding.
     private func wake() {
+        guard !finished, model.player?.id == request.id else { return }
         if !chromeVisible { withAnimation(.easeOut(duration: 0.2)) { chromeVisible = true } }
         hideTask?.cancel()
         // the screenshot rig needs the controls to stay up; nothing else sets this
@@ -518,12 +548,14 @@ struct PhoneVideoSurface: UIViewRepresentable {
 }
 
 /// Audio, subtitles, speed and info as a sheet — where a phone expects a list it can scroll.
+@MainActor
 struct PlayerSheetView: View {
     let kind: PhonePlayer.PlayerSheet
     @ObservedObject var mpv: MPVController
     let subsAdded: Bool
     let infoRows: [(String, String)]
     let prefs: Prefs
+    let onSubtitlePick: () -> Void
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -534,14 +566,14 @@ struct PlayerSheetView: View {
                     let list = mpv.tracks.filter { $0.type == "audio" }
                     if list.isEmpty { note("This stream has one soundtrack.") }
                     ForEach(list) { t in
-                        row(t.label, on: t.selected) { mpv.selectTrack("audio", id: t.id); prefs.audioLang = t.lang }
+                        row(t.label, on: t.selected) { mpv.selectTrack("audio", id: t.id); prefs.audioLang = Lang.key(t.lang) }
                     }
                 case .subtitles:
                     let list = mpv.tracks.filter { $0.type == "sub" }
-                    row("Off", on: !list.contains { $0.selected }) { mpv.selectTrack("sub", id: nil); prefs.subLang = "" }
+                    row("Off", on: !list.contains { $0.selected }) { onSubtitlePick(); mpv.selectTrack("sub", id: nil); prefs.subLang = "" }
                     ForEach(list) { t in
                         row(t.label + (t.external ? "" : " · in the file"), on: t.selected) {
-                            mpv.selectTrack("sub", id: t.id); prefs.subLang = t.lang
+                            onSubtitlePick(); mpv.selectTrack("sub", id: t.id); prefs.subLang = Lang.key(t.lang)
                         }
                     }
                     if list.isEmpty { note(subsAdded ? "No subtitles were found for this." : "Looking for subtitles…") }

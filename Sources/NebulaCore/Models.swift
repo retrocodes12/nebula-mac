@@ -25,6 +25,7 @@ public struct CatalogRef: Equatable, Hashable, Sendable {
     /// Home can ask for it as it is. A catalog that only answers to a list of ids or to a
     /// search term has no page to show.
     public var browsable: Bool
+    public var requiredExtras: Set<String> = []
 }
 
 /// Which types and id prefixes a resource answers for. nil = everything.
@@ -32,12 +33,24 @@ public struct ResourceScope: Equatable, Sendable {
     public var has = false
     public var types: [String]?
     public var prefixes: [String]?
+    /// Keep each original pairing; the unions above are descriptive, not a cross-product.
+    var pairs: [Pair] = []
+
+    struct Pair: Equatable, Sendable {
+        var types: [String]?
+        var prefixes: [String]?
+
+        func matches(type: String, id: String) -> Bool {
+            if let t = types, !t.isEmpty, !t.contains(type) { return false }
+            if let p = prefixes, !p.isEmpty { return p.contains { id.hasPrefix($0) } }
+            return true
+        }
+    }
 
     public func matches(type: String, id: String) -> Bool {
         guard has else { return false }
-        if let t = types, !t.isEmpty, !t.contains(type) { return false }
-        if let p = prefixes, !p.isEmpty { return p.contains { id.hasPrefix($0) } }
-        return true
+        if !pairs.isEmpty { return pairs.contains { $0.matches(type: type, id: id) } }
+        return Pair(types: types, prefixes: prefixes).matches(type: type, id: id)
     }
 }
 

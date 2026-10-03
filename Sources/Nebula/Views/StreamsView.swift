@@ -151,7 +151,7 @@ struct StreamsView: View {
             .opacity(0.55)
             LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: Theme.bg, location: 1)], startPoint: .top, endPoint: .bottom)
             VStack(alignment: .leading, spacing: 8) {
-                if let k = Ids.episodeKicker(target.id) { Eyebrow(k) }
+                if target.episode != nil || target.type == "series", let k = Ids.episodeKicker(target.id) { Eyebrow(k) }
                 Text(target.episode?.name ?? target.item.name).scaledFont(size: 30, weight: .bold).foregroundStyle(.white).lineLimit(2)
                 if target.episode != nil { Text(target.item.name).scaledFont(size: 14).foregroundStyle(Theme.label2) }
                 if resumeAt > 0 {
@@ -169,7 +169,7 @@ struct StreamsView: View {
 
     /// The add-on the title came from leads; the rest keep the viewer's own ranking.
     private func order(_ s: [StreamSection]) -> [StreamSection] {
-        let rank = Dictionary(uniqueKeysWithValues: model.addons.enumerated().map { ($1.manifestUrl, $0) })
+        let rank = Dictionary(model.addons.enumerated().map { ($1.manifestUrl, $0) }, uniquingKeysWith: { a, _ in a })
         return s.sorted { a, b in
             if (a.id == target.addonUrl) != (b.id == target.addonUrl) { return a.id == target.addonUrl }
             return (rank[a.id] ?? 999) < (rank[b.id] ?? 999)
@@ -177,7 +177,7 @@ struct StreamsView: View {
     }
 
     /// An episode id with no series around it yet.
-    private var needsSeries: Bool { target.episode == nil && target.id != target.item.id }
+    private var needsSeries: Bool { target.type == "series" && target.episode == nil && target.id != target.item.id }
 
     /// Opened from Continue watching there is only an episode id: fetch the series so the header
     /// can name the episode and the player knows what comes next.

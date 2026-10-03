@@ -33,7 +33,7 @@ enum Smoke {
             if ClearKey.looksLikeDash(address) && !args.contains("--direct") {
                 if let m = await ManifestProxy.shared.open(address, headers: [:], maxHeight: 0) {
                     play = m.address
-                    if state.keys.isEmpty { state.keys = await ClearKey.resolve(xml: m.xml, using: Stremio()) }
+                    if state.keys.isEmpty { state.keys = await ClearKey.resolve(xml: m.xml, manifestUrl: m.base, using: Stremio()) }
                 }
             }
             if state.keys.isEmpty && ClearKey.looksLikeDash(address) { state.keys = await ClearKey.resolve(manifestUrl: address, using: Stremio()) }
@@ -55,7 +55,7 @@ enum Smoke {
             // a live stream's clock does not start at zero, so measure from the first reading
             if mpv.loaded && state.first == nil && mpv.timePos > 0 { state.first = mpv.timePos }
             if let f = state.first, mpv.timePos - f >= want { report("played", 0) }
-            if mpv.ended { report(state.first != nil ? "played" : "ended-at-zero", state.first != nil ? 0 : 1) }
+            if mpv.ended { report(state.first != nil ? "ended-too-soon" : "ended-at-zero", 1) }
             if waited > 90 { report("timed-out", 2) }
         }
         RunLoop.main.add(timer, forMode: .common)

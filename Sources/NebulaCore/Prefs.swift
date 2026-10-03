@@ -34,7 +34,9 @@ public final class Prefs: @unchecked Sendable {
         get { (get("autoplayNext") as? Bool) ?? true }
         set { put("autoplayNext", newValue) }
     }
-    /// Preferred caption language (ISO 639-2, as add-ons give it); empty = off until picked.
+    /// An unset caption preference leaves the engine's choice alone; a stored empty one is Off.
+    public var hasSubLang: Bool { get("subLang") is String }
+    /// Preferred caption language, as add-ons give it.
     public var subLang: String {
         get { (get("subLang") as? String) ?? "" }
         set { put("subLang", newValue) }

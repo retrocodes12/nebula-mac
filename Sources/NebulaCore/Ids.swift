@@ -1,6 +1,11 @@
 import Foundation
 
 public enum Ids {
+    /// Standalone IDs may also contain colons; only series progress denotes an episode.
+    public static func itemId(type: String, id: String) -> String {
+        type == "series" ? seriesId(of: id) : id
+    }
+
     /// The series behind an episode id. "tt123:1:2" → tt123 and "12345:1:2" → 12345; a prefixed id
     /// keeps its first two segments ("kitsu:12345:3" → kitsu:12345). A bare series id returns itself.
     public static func seriesId(of episodeId: String) -> String {

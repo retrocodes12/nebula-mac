@@ -16,10 +16,11 @@ public enum DashManifest {
     static let reMpdOpen = rx(#"<MPD\b[^>]*>"#)
 
     static func attr(_ name: String, in tag: String) -> String? {
-        guard let re = try? NSRegularExpression(pattern: "\\b" + name + "=\"([^\"]*)\"", options: [.caseInsensitive]),
+        let pattern = #"\b"# + NSRegularExpression.escapedPattern(for: name) + #"\s*=\s*(?:"([^"]*)"|'([^']*)')"#
+        guard let re = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
               let m = re.firstMatch(in: tag, options: [], range: NSRange(tag.startIndex..., in: tag)),
-              let r = Range(m.range(at: 1), in: tag) else { return nil }
-        return String(tag[r])
+              let r = Range(m.range(at: m.range(at: 1).location == NSNotFound ? 2 : 1), in: tag) else { return nil }
+        return xmlDecoded(String(tag[r]))
     }
 
     static func openTag(_ element: String) -> String {
@@ -50,10 +51,12 @@ public enum DashManifest {
             guard isVideo else { continue }
             func bandwidth(_ r: String) -> Int { Int(attr("bandwidth", in: openTag(r)) ?? "") ?? 0 }
             func height(_ r: String) -> Int { Int(attr("height", in: openTag(r)) ?? attr("height", in: openTag(set)) ?? "") ?? 0 }
-            let fitting = maxHeight > 0 ? reps.filter { height($0) > 0 && height($0) <= maxHeight } : reps
+            let ranked = maxHeight > 0 ? reps.filter { height($0) > 0 } : reps
+            guard ranked.contains(where: { height($0) > 0 || bandwidth($0) > 0 }) else { continue }
+            let fitting = maxHeight > 0 ? ranked.filter { height($0) <= maxHeight } : ranked
             let keep: String
             if let best = fitting.max(by: { (height($0), bandwidth($0)) < (height($1), bandwidth($1)) }) { keep = best }
-            else { keep = reps.min(by: { (height($0), bandwidth($0)) < (height($1), bandwidth($1)) })! }
+            else { keep = ranked.min(by: { (height($0), bandwidth($0)) < (height($1), bandwidth($1)) })! }
             var trimmed = set
             for r in reps where r != keep { trimmed = trimmed.replacingOccurrences(of: r, with: "") }
             out = out.replacingOccurrences(of: set, with: trimmed)
@@ -61,26 +64,51 @@ public enum DashManifest {
         return out
     }
 
+    static func xmlDecoded(_ text: String) -> String {
+        let entities = ["amp": "&", "lt": "<", "gt": ">", "quot": "\"", "apos": "'"]
+        let re = rx(#"&(#x[0-9a-f]+|#[0-9]+|amp|lt|gt|quot|apos);"#)
+        var out = text
+        for match in re.matches(in: text, range: NSRange(text.startIndex..., in: text)).reversed() {
+            guard let whole = Range(match.range, in: out), let inner = Range(match.range(at: 1), in: text) else { continue }
+            let name = String(text[inner])
+            var value = entities[name]
+            if name.hasPrefix("#") {
+                let hex = name.lowercased().hasPrefix("#x")
+                if let n = UInt32(name.dropFirst(hex ? 2 : 1), radix: hex ? 16 : 10), let scalar = UnicodeScalar(n) { value = String(scalar) }
+            }
+            if let value = value { out.replaceSubrange(whole, with: value) }
+        }
+        return out
+    }
+
+    static func xmlEscaped(_ text: String) -> String {
+        text.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;").replacingOccurrences(of: "\"", with: "&quot;")
+            .replacingOccurrences(of: "'", with: "&apos;")
+    }
+
     /// Served from another address, a manifest's relative addresses would point at the wrong
     /// host: give it an absolute base — its own folder — unless it already names one.
     public static func absoluteBase(_ xml: String, manifestUrl: String) -> String {
         guard let here = URL(string: manifestUrl) else { return xml }
-        let folder = here.deletingLastPathComponent()
-        var folderText = folder.absoluteString
-        if let q = folderText.firstIndex(of: "?") { folderText = String(folderText[..<q]) }
+        guard var folder = URLComponents(url: here.deletingLastPathComponent(), resolvingAgainstBaseURL: true) else { return xml }
+        folder.query = nil; folder.fragment = nil
+        guard let folderText = folder.url?.absoluteString else { return xml }
         let periodAt = xml.range(of: "<Period", options: [.caseInsensitive])?.lowerBound ?? xml.endIndex
         let top = String(xml[..<periodAt])
         if let m = reBase.firstMatch(in: top, options: [], range: NSRange(top.startIndex..., in: top)),
-           let whole = Range(m.range, in: top), let inner = Range(m.range(at: 1), in: top) {
-            let value = top[inner].trimmingCharacters(in: .whitespacesAndNewlines)
+           let inner = Range(m.range(at: 1), in: top) {
+            let value = xmlDecoded(top[inner].trimmingCharacters(in: .whitespacesAndNewlines))
             if value.lowercased().hasPrefix("http://") || value.lowercased().hasPrefix("https://") { return xml }
-            guard let resolved = URL(string: value, relativeTo: folder)?.absoluteString else { return xml }
-            let fixed = String(top[whole]).replacingOccurrences(of: String(top[inner]), with: resolved)
-            return xml.replacingOccurrences(of: String(top[whole]), with: fixed, options: [], range: xml.startIndex..<periodAt)
+            guard let resolved = URL(string: value, relativeTo: here)?.absoluteURL.absoluteString else { return xml }
+            var fixed = xml
+            guard let content = Range(m.range(at: 1), in: fixed) else { return xml }
+            fixed.replaceSubrange(content, with: xmlEscaped(resolved))
+            return fixed
         }
         guard let m = reMpdOpen.firstMatch(in: xml, options: [], range: NSRange(xml.startIndex..., in: xml)), let r = Range(m.range, in: xml) else { return xml }
         var s = xml
-        s.insert(contentsOf: "<BaseURL>\(folderText)</BaseURL>", at: r.upperBound)
+        s.insert(contentsOf: "<BaseURL>\(xmlEscaped(folderText))</BaseURL>", at: r.upperBound)
         return s
     }
 }

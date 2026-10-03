@@ -3,6 +3,7 @@ import AppKit
 import NebulaCore
 
 /// The player: the video edge to edge, Apple-TV glass chrome over it that gets out of the way.
+@MainActor
 struct PlayerScreen: View {
     @EnvironmentObject var model: AppModel
     let request: PlayRequest
@@ -13,6 +14,11 @@ struct PlayerScreen: View {
     @State private var scrubbing: Double?
     @State private var keyMonitor: Any?
     @State private var captions = PlaybackRules.CaptionGate()
+    @State private var sourceTask: Task<Void, Never>?
+    @State private var subtitleTask: Task<Void, Never>?
+    @State private var nextTask: Task<Void, Never>?
+    @State private var manifestToken: String?
+    @State private var finished = false
     /// What the engine was handed, so Try again can hand it the same.
     @State private var resolved: String?
     @State private var resolvedKeys: [String: String] = [:]
@@ -103,7 +109,8 @@ struct PlayerScreen: View {
                 GlassCircle(icon: "gobackward.\(stepIcon)", label: "Back \(model.prefs.seekStep) seconds", size: 52) { mpv.seek(by: -Double(model.prefs.seekStep)); wake() }
                     .opacity(mpv.canStepBack ? 1 : 0.3)
                 GlassCircle(icon: mpv.ended ? "arrow.counterclockwise" : mpv.paused ? "play.fill" : "pause.fill", label: mpv.paused ? "Play" : "Pause", size: 72) {
-                    if mpv.ended { mpv.seek(to: 0); mpv.setPaused(false) } else { mpv.togglePause() }
+                    if mpv.ended && mpv.isLive { retry() }
+                    else if mpv.ended { mpv.seek(to: 0); mpv.setPaused(false) } else { mpv.togglePause() }
                     wake()
                 }
                 GlassCircle(icon: "goforward.\(stepIcon)", label: "Forward \(model.prefs.seekStep) seconds", size: 52) { mpv.seek(by: Double(model.prefs.seekStep)); wake() }
@@ -179,14 +186,14 @@ struct PlayerScreen: View {
                     menuTitle("Audio")
                     let list = mpv.tracks.filter { $0.type == "audio" }
                     if list.isEmpty { menuNote("This stream has one soundtrack.") }
-                    ForEach(list) { t in menuRow(t.label, on: t.selected) { mpv.selectTrack("audio", id: t.id); model.prefs.audioLang = t.lang } }
+                    ForEach(list) { t in menuRow(t.label, on: t.selected) { mpv.selectTrack("audio", id: t.id); model.prefs.audioLang = Lang.key(t.lang) } }
                 case .subtitles:
                     menuTitle("Subtitles")
                     let list = mpv.tracks.filter { $0.type == "sub" }
-                    menuRow("Off", on: !list.contains { $0.selected }) { mpv.selectTrack("sub", id: nil); model.prefs.subLang = "" }
+                    menuRow("Off", on: !list.contains { $0.selected }) { captions.picked(); mpv.selectTrack("sub", id: nil); model.prefs.subLang = "" }
                     ScrollView {
                         VStack(alignment: .leading, spacing: 2) {
-                            ForEach(list) { t in menuRow(t.label + (t.external ? "" : " · in the file"), on: t.selected) { mpv.selectTrack("sub", id: t.id); model.prefs.subLang = t.lang } }
+                            ForEach(list) { t in menuRow(t.label + (t.external ? "" : " · in the file"), on: t.selected) { captions.picked(); mpv.selectTrack("sub", id: t.id); model.prefs.subLang = Lang.key(t.lang) } }
                         }
                     }
                     .frame(maxHeight: 280)
@@ -290,6 +297,7 @@ struct PlayerScreen: View {
     @State private var protected = false
 
     private func start() {
+        guard sourceTask == nil, !finished, model.player?.id == request.id else { return }
         mpv.setVolume(model.prefs.volume)
         let t = request.target
         nowPlaying.start(id: request.id, mpv: mpv, title: request.kicker ?? request.title, subtitle: request.kicker == nil ? nil : request.title,
@@ -297,15 +305,18 @@ struct PlayerScreen: View {
         // an onChange does not fire for the value a view starts with, and this one starts true
         keepDisplayAwake(wantsAwake)
         let s = request.stream
-        Task {
+        sourceTask = Task {
             let got = await PlaybackRules.source(for: s, maxHeight: model.prefs.maxHeight, stremio: model.stremio)
+            guard !Task.isCancelled, !finished, model.player?.id == request.id else { ManifestProxy.shared.release(got.token); return }
+            manifestToken = got.token
             protected = !got.keys.isEmpty
             resolved = got.address; resolvedKeys = got.keys
             mpv.load(url: got.address, startAt: request.startAt, keys: got.keys, headers: s.headers)
         }
-        Task {
+        subtitleTask = Task {
             let t = request.target
             let subs = await model.addonSubtitles(type: t.type, id: t.id)
+            guard !Task.isCancelled, !finished, model.player?.id == request.id else { return }
             if captions.addonsAnswered(subs) { attachSubs() }
         }
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { ev in handleKey(ev) ? nil : ev }
@@ -313,9 +324,11 @@ struct PlayerScreen: View {
     }
 
     private func loadedNow() {
+        guard !finished, model.player?.id == request.id else { return }
+        if !captions.handPicked { PlaybackRules.selectSubtitles(want: model.prefs.subLang, chosen: model.prefs.hasSubLang, to: mpv) }
         if captions.fileLoaded() { attachSubs() }
-        let want = model.prefs.audioLang
-        if !want.isEmpty, let t = mpv.tracks.first(where: { $0.type == "audio" && $0.lang == want }), !t.selected { mpv.selectTrack("audio", id: t.id) }
+        let want = Lang.key(model.prefs.audioLang)
+        if !want.isEmpty, let t = mpv.tracks.first(where: { $0.type == "audio" && Lang.key($0.lang) == want }), !t.selected { mpv.selectTrack("audio", id: t.id) }
     }
 
     /// Called once, when the gate opens: the file is open and the add-ons have answered.
@@ -335,7 +348,8 @@ struct PlayerScreen: View {
     }
 
     private func reachedEnd() {
-        guard !mpv.isLive else { return }
+        guard !finished, model.player?.id == request.id else { return }
+        guard !mpv.isLive else { mpv.failure = PlaybackRules.liveStopped; return }
         guard PlaybackRules.reachedTheEnd(pos: mpv.timePos, dur: mpv.duration) else {
             // the connection went, not the film: keep the place and say so
             save()
@@ -348,13 +362,14 @@ struct PlayerScreen: View {
 
     /// The same release of the next episode when the add-on says which that is, else its first stream.
     private func playNext(_ n: Episode) {
-        guard !nextBusy else { return }
+        guard !nextBusy, !finished, model.player?.id == request.id else { return }
         nextBusy = true
         var target = request.target
         target.id = n.id; target.episode = n
         let group = request.stream.bingeGroup, origin = request.streamAddon
-        Task {
+        nextTask = Task {
             let found = await PlaybackRules.nextStream(origin: origin, type: target.type, id: n.id, bingeGroup: group, stremio: model.stremio)
+            guard !Task.isCancelled, !finished, model.player?.id == request.id else { return }
             nextBusy = false
             if let f = found {
                 save()
@@ -370,14 +385,18 @@ struct PlayerScreen: View {
     /// resolved afresh, not replayed: protected DASH plays through the loopback manifest cache,
     /// and the address handed out before may name a port that listener has since given up.
     private func retry() {
-        guard resolved != nil, !retrying else { return }
+        guard resolved != nil, !retrying, !finished, model.player?.id == request.id else { return }
         let at = mpv.isLive ? 0 : max(0, mpv.timePos - 2)
         retrying = true
         mpv.failure = nil; mpv.buffering = true
         captions.reopened()
         let s = request.stream
-        Task {
+        sourceTask?.cancel()
+        sourceTask = Task {
             let got = await PlaybackRules.source(for: s, maxHeight: model.prefs.maxHeight, stremio: model.stremio)
+            guard !Task.isCancelled, !finished, model.player?.id == request.id else { ManifestProxy.shared.release(got.token); return }
+            ManifestProxy.shared.release(manifestToken)
+            manifestToken = got.token
             let keys = got.keys.isEmpty ? resolvedKeys : got.keys     // a licence that did not answer this time
             resolved = got.address; resolvedKeys = keys
             retrying = false
@@ -387,6 +406,11 @@ struct PlayerScreen: View {
     }
 
     private func finish() {
+        guard !finished else { return }
+        finished = true
+        sourceTask?.cancel(); subtitleTask?.cancel(); nextTask?.cancel()
+        ManifestProxy.shared.release(manifestToken)
+        manifestToken = nil
         save()
         nowPlaying.finish()
         keepDisplayAwake(false)
@@ -398,6 +422,8 @@ struct PlayerScreen: View {
     }
 
     private func close() {
+        guard model.player?.id == request.id else { return }
+        finish()
         if let w = NSApp.keyWindow, w.styleMask.contains(.fullScreen) { w.toggleFullScreen(nil) }
         model.player = nil
     }
@@ -406,6 +432,7 @@ struct PlayerScreen: View {
 
     /// Show the chrome and the pointer, then let both go after three quiet seconds.
     private func wake() {
+        guard !finished, model.player?.id == request.id else { return }
         if !chromeVisible { chromeVisible = true }
         if cursorHidden { NSCursor.unhide(); cursorHidden = false }
         hideTask?.cancel()

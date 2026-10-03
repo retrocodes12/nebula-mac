@@ -310,19 +310,33 @@ final class AppModel: ObservableObject {
 
     var activeAddons: [Addon] { addons.filter(\.enabled) }
 
-    func saveAddons(_ next: [Addon], reordered: Bool = false) {
-        addonStore.save(next, reordered: reordered)
-        addons = next
+    func setAddonEnabled(_ enabled: Bool, manifestUrl: String) {
+        addonStore.setEnabled(enabled, manifestUrl: manifestUrl)
+        addons = addonStore.all()
+        invalidateHome()
+    }
+
+    func moveAddon(_ manifestUrl: String, by offset: Int) {
+        addonStore.move(manifestUrl, by: offset)
+        addons = addonStore.all()
+        invalidateHome()
+    }
+
+    func removeAddon(_ manifestUrl: String) {
+        addonStore.remove(manifestUrl)
+        addons = addonStore.all()
         invalidateHome()
     }
 
     /// Install from whatever was pasted. Returns nil on success or a sentence to show.
     func installAddon(_ raw: String) async -> String? {
         guard let url = Stremio.addonUrlOf(raw) else { return "Paste the add-on’s address." }
-        if addons.contains(where: { $0.manifestUrl == url }) { return "That add-on is already installed." }
+        if addonStore.all().contains(where: { $0.manifestUrl == url }) { return "That add-on is already installed." }
         guard let m = try? await stremio.loadManifest(url) else { return "That address did not answer with an add-on." }
+        guard addonStore.add(m.addon) else { addons = addonStore.all(); return "That add-on is already installed." }
         manifestCache[url] = m; manifestMisses[url] = nil
-        saveAddons(addons + [m.addon])
+        addons = addonStore.all()
+        invalidateHome()
         say("Added \(m.addon.name).")
         return nil
     }
@@ -348,8 +362,8 @@ final class AppModel: ObservableObject {
     /// once, when the first answers have settled (1.5 s, or sooner if everything is in), and from
     /// then on a late add-on's rows go on the END — a row on screen never moves down or goes
     /// away under the viewer, and the hero (the first row with art) stays what it was. Every
-    /// add-on shares one budget of 24 catalogs, spent in the order their manifests arrive: it
-    /// used to be 24 each, most of them fetched and thrown away, on mobile data.
+    /// add-on shares one budget of 24 catalogs, reserved in the viewer's order: a slow answer
+    /// must not lose its places to the faster ones.
     func loadHome() async {
         let active = activeAddons
         let sig = active.map(\.manifestUrl).joined(separator: "\n")
@@ -396,10 +410,10 @@ final class AppModel: ObservableObject {
                 case .manifest(let i, let m):
                     out -= 1
                     guard let m = m else { misses += 1; break }
-                    // a share each, not first come first served: a catalog-heavy add-on whose manifest landed first
-                    // took all 24 and the viewer's first add-on got no rows (and no hero) on a cold launch
-                    let share = max(6, budget / max(1, active.count))
-                    let want = Array(m.catalogs.filter(\.browsable).prefix(min(share, max(0, budget - asked))))
+                    // reserve each share before answers arrive; the first add-ons keep the spare places
+                    let count = max(1, active.count)
+                    let share = budget / count + (i < budget % count ? 1 : 0)
+                    let want = Array(m.catalogs.filter(\.browsable).prefix(share))
                     catalogs[i] = want
                     rows[i] = Array(repeating: nil, count: want.count)
                     asked += want.count

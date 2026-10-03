@@ -12,6 +12,14 @@ public struct HTTPFailure: Error, CustomStringConvertible {
 /// One way out to the network, so tests can stand in for it.
 public protocol Transport: Sendable {
     func send(_ request: URLRequest) async throws -> (Data, Int)
+    func sendWithURL(_ request: URLRequest) async throws -> (Data, Int, URL)
+}
+
+public extension Transport {
+    func sendWithURL(_ request: URLRequest) async throws -> (Data, Int, URL) {
+        let (data, code) = try await send(request)
+        return (data, code, request.url!)
+    }
 }
 
 public struct URLSessionTransport: Transport {
@@ -31,6 +39,11 @@ public struct URLSessionTransport: Transport {
     }
 
     public func send(_ request: URLRequest) async throws -> (Data, Int) {
+        let (data, code, _) = try await sendWithURL(request)
+        return (data, code)
+    }
+
+    public func sendWithURL(_ request: URLRequest) async throws -> (Data, Int, URL) {
         // a continuation rather than `data(for:)`: corelibs Foundation grew the async call late.
         // Cancelling the caller cancels the request — without that a capped wait (subtitles,
         // a dead add-on) still sat out the full timeout before it could return.
@@ -40,7 +53,7 @@ public struct URLSessionTransport: Transport {
                 let task = session.dataTask(with: request) { data, resp, err in
                     if let err = err { cont.resume(throwing: err); return }
                     let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
-                    cont.resume(returning: (data ?? Data(), code))
+                    cont.resume(returning: (data ?? Data(), code, resp?.url ?? request.url!))
                 }
                 handle.set(task)
                 task.resume()
@@ -73,6 +86,13 @@ public enum Net {
     /// serves its direct cards instead of the "open in Nebula" launcher meant for other clients.
     public static let userAgent = "NebulaPlayer"
     public static let clientName = "macos"
+
+    public static func sameOrigin(_ a: URL, _ b: URL) -> Bool {
+        guard let scheme = a.scheme?.lowercased(), ["http", "https"].contains(scheme),
+              let host = a.host?.lowercased(), !host.isEmpty else { return false }
+        return scheme == b.scheme?.lowercased() && host == b.host?.lowercased()
+            && (a.port ?? (scheme == "https" ? 443 : 80)) == (b.port ?? (scheme == "https" ? 443 : 80))
+    }
 
     public static func addonRequest(_ url: URL) -> URLRequest {
         var r = URLRequest(url: url)

@@ -10,6 +10,9 @@ public final class Store: @unchecked Sendable {
     public init(directory: URL) {
         dir = directory
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        #if os(iOS)
+        excludeCredentialFromBackup()
+        #endif
     }
 
     /// `~/Library/Application Support/Nebula` on a Mac.
@@ -37,19 +40,29 @@ public final class Store: @unchecked Sendable {
             // the credential lives here too — keep the files to this user
             try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file(key).path)
             #if os(iOS)
-            // …and out of backups: restored onto another phone, this device's sign-in would make that phone this device
-            if key == "cloud_link" {
-                var u = file(key)
-                var rv = URLResourceValues()
-                rv.isExcludedFromBackup = true
-                try? u.setResourceValues(rv)
-            }
+            if key == "cloud_link" { excludeCredentialFromBackup() }
             #endif
         } else {
             cache[key] = nil
             try? FileManager.default.removeItem(at: file(key))
         }
     }
+
+    #if os(iOS)
+    /// Also migrate an existing sign-in on open, without waiting for another sign-in to rewrite it.
+    private func excludeCredentialFromBackup() {
+        var u = file("cloud_link")
+        guard FileManager.default.fileExists(atPath: u.path) else { return }
+        do {
+            var rv = URLResourceValues(); rv.isExcludedFromBackup = true
+            try u.setResourceValues(rv)
+        } catch {
+            // drop a sign-in we cannot protect, but never keep the app from opening
+            cache["cloud_link"] = nil
+            try? FileManager.default.removeItem(at: u)
+        }
+    }
+    #endif
 
     public func object(_ key: String) -> JSONObject { string(key).flatMap(JSON.object) ?? [:] }
     public func setObject(_ key: String, _ o: JSONObject) { set(key, JSON.text(o)) }

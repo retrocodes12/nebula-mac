@@ -23,18 +23,18 @@ final class CatalogPager: ObservableObject {
         await more(addon: addon, catalog: catalog, genre: genre, stremio: stremio)
     }
 
-    func more(addon: Addon, catalog: CatalogRef, genre: String?, stremio: Stremio) async {
-        guard !loading, !done, items.count < 1000 else { return }
+    func more(addon: Addon, catalog: CatalogRef, genre: String?, stremio: Stremio, retry: Bool = false) async {
+        guard !loading, !done, !failed || retry, items.count < 1000 else { return }
         let mine = seq
-        loading = true
+        loading = true; failed = false
         defer { if mine == seq { loading = false } }
         guard let page = try? await stremio.loadCatalog(base: addon.base, catalog: catalog, genre: genre, skip: fetched) else {
             // a request cancelled because the page asked again (Try again, another pick) did not
             // fail: saying "did not answer" for it flashed the error before the new answer
-            if mine == seq && !Task.isCancelled { failed = items.isEmpty; done = true }
+            if mine == seq && !Task.isCancelled { failed = true }
             return
         }
-        guard mine == seq else { return }
+        guard mine == seq, !Task.isCancelled else { return }
         fetched += page.count
         let new = page.filter { seen.insert($0.id).inserted }
         items.append(contentsOf: new)
@@ -68,8 +68,8 @@ struct CatalogView: View {
                 }
                 if pager.loading { ProgressView().controlSize(.small).frame(maxWidth: .infinity).padding() }
                 if pager.failed {
-                    EmptyState(icon: "wifi.slash", title: "This catalog did not answer", detail: "Check the connection, or try again in a moment.",
-                               actionTitle: "Try again", action: { Task { await pager.reset(addon: target.addon, catalog: target.catalog, genre: genre, stremio: model.stremio) } })
+                    EmptyState(icon: "wifi.slash", title: pager.items.isEmpty ? "This catalog did not answer" : "More titles could not be loaded", detail: "Check the connection, or try again in a moment.",
+                               actionTitle: "Try again", action: { Task { await pager.more(addon: target.addon, catalog: target.catalog, genre: genre, stremio: model.stremio, retry: true) } })
                 }
                 else if !pager.loading && pager.items.isEmpty { EmptyState(icon: "square.grid.2x2", title: "Nothing here.", detail: "This catalog is empty right now.") }
             }
@@ -88,7 +88,8 @@ struct LibraryView: View {
     var body: some View {
         let all = model.library.list()
         let types = Array(Set(all.map(\.type))).sorted()
-        let shown = all.filter { type == nil || $0.type == type }
+        let selected = type.flatMap { types.contains($0) ? $0 : nil }
+        let shown = all.filter { selected == nil || $0.type == selected }
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 HStack(alignment: .firstTextBaseline, spacing: 10) {
@@ -104,6 +105,9 @@ struct LibraryView: View {
                 }
                 if all.isEmpty {
                     EmptyState(icon: "bookmark", title: "Nothing saved yet", detail: "Use the + on any title to keep it here. With a profile, the list follows you to your TV and phone.")
+                } else if shown.isEmpty {
+                    EmptyState(icon: "bookmark", title: "Nothing of this type saved", detail: "Your other saved titles are still here.",
+                               actionTitle: "Show all", action: { type = nil })
                 } else {
                     let urls = Dictionary(all.map { ($0.type + ":" + $0.id, $0.addonUrl) }, uniquingKeysWith: { a, _ in a })
                     PosterGrid(items: shown.map(\.meta), addonUrl: { urls[$0.type + ":" + $0.id] ?? "" })
@@ -113,5 +117,8 @@ struct LibraryView: View {
         }
         .background(Theme.bg)
         .id(model.libraryVersion)
+        .onChange(of: types) { available in
+            if let t = type, !available.contains(t) { type = nil }
+        }
     }
 }

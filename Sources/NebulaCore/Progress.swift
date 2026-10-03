@@ -108,9 +108,9 @@ public final class ProgressStore: @unchecked Sendable {
             // is the newest thing here and an oldest-first trim would take a LIVE resume point —
             // a position the viewer cannot get back. Stale tombstones go first, then ticks, and a
             // resume point is the last thing dropped.
-            let now = nowMs()
+            let cutoff = nowMs() - 180 * 24 * 3_600_000
             func rank(_ r: ProgressRec) -> Int {
-                if r.dismissed { return now - r.at > 180 * 24 * 3_600_000 ? 0 : 2 }
+                if r.dismissed { return r.at < cutoff ? 0 : 2 }
                 return r.done ? 2 : 3
             }
             let doomed = m.sorted { a, b in
@@ -166,6 +166,7 @@ public final class ProgressStore: @unchecked Sendable {
         if id.isEmpty { return }
         let k = ProgressStore.key(type, id)
         mutate { m in
+            guard m[k]?.done != true else { return false }
             // `hand` means "no playback ever happened here". Ticking off the episode you are
             // part-way through is you finishing it, not a claim about the past — stamping that
             // `hand` would throw away the only evidence of where you are.

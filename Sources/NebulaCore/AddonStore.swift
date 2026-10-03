@@ -23,8 +23,9 @@ public final class AddonStore: @unchecked Sendable {
 
     public func all() -> [Addon] {
         let doc = store.object("addons")
+        var seen = Set<String>()
         return doc.objs("list").compactMap { o in
-            guard let u = o.text("manifestUrl") else { return nil }
+            guard let u = o.text("manifestUrl"), seen.insert(u).inserted else { return nil }
             return Addon(manifestUrl: u, name: o.text("name") ?? "Add-on", base: o.text("base") ?? Stremio.baseOf(u),
                          logo: o.text("logo"), enabled: o["enabled"] == nil ? true : o.bool("enabled"))
         }
@@ -34,28 +35,71 @@ public final class AddonStore: @unchecked Sendable {
 
     /// Write the list without touching the sync stamps (a merge, a seed).
     public func saveRaw(_ list: [Addon]) {
-        let arr: [JSONObject] = list.map {
-            ["manifestUrl": $0.manifestUrl, "name": $0.name, "base": $0.base, "logo": $0.logo ?? "", "enabled": $0.enabled]
+        locked {
+            var seen = Set<String>()
+            let arr: [JSONObject] = list.filter { seen.insert($0.manifestUrl).inserted }.map {
+                ["manifestUrl": $0.manifestUrl, "name": $0.name, "base": $0.base, "logo": $0.logo ?? "", "enabled": $0.enabled]
+            }
+            store.setObject("addons", ["list": arr])
         }
-        store.setObject("addons", ["list": arr])
     }
 
-    /// A deliberate change: stamp what was added and tombstone what was removed.
-    public func save(_ next: [Addon], reordered: Bool = false) {
-        locked {
-            let prev = all()
-            var s = syncDoc()
-            var at = s.obj("at") ?? [:], removed = s.obj("removed") ?? [:]
-            let now = nowMs()
-            let pv = Set(prev.map(\.manifestUrl)), nx = Set(next.map(\.manifestUrl))
-            for a in next where !pv.contains(a.manifestUrl) { at[a.manifestUrl] = now; removed[a.manifestUrl] = nil }
-            for a in prev where !nx.contains(a.manifestUrl) { removed[a.manifestUrl] = now; at[a.manifestUrl] = nil }
-            s["at"] = at; s["removed"] = removed
-            if reordered { s["orderAt"] = now }
+    /// Apply an intent to the current list, never a replacement built from a UI snapshot.
+    @discardableResult
+    private func change(_ body: (inout [Addon], inout JSONObject) -> Bool) -> Bool {
+        let changed = locked {
+            var list = all(), s = syncDoc()
+            guard body(&list, &s) else { return false }
             store.setObject("addons_sync", s)
-            saveRaw(next)
+            saveRaw(list)
+            return true
         }
-        onChange?()
+        if changed { onChange?() }
+        return changed
+    }
+
+    /// The final install step is atomic even when sync installed this URL during its fetch.
+    @discardableResult
+    public func add(_ addon: Addon) -> Bool {
+        change { list, s in
+            guard !list.contains(where: { $0.manifestUrl == addon.manifestUrl }) else { return false }
+            var at = s.obj("at") ?? [:], removed = s.obj("removed") ?? [:]
+            at[addon.manifestUrl] = nowMs(); removed[addon.manifestUrl] = nil
+            s["at"] = at; s["removed"] = removed
+            list.append(addon)
+            return true
+        }
+    }
+
+    public func setEnabled(_ enabled: Bool, manifestUrl: String) {
+        change { list, _ in
+            guard let i = list.firstIndex(where: { $0.manifestUrl == manifestUrl }), list[i].enabled != enabled else { return false }
+            list[i].enabled = enabled
+            return true
+        }
+    }
+
+    public func move(_ manifestUrl: String, by offset: Int) {
+        change { list, s in
+            guard let i = list.firstIndex(where: { $0.manifestUrl == manifestUrl }) else { return false }
+            let step = max(-i, min(list.count - 1 - i, offset))
+            guard step != 0 else { return false }
+            let moved = list.remove(at: i)
+            list.insert(moved, at: i + step)
+            s["orderAt"] = nowMs()
+            return true
+        }
+    }
+
+    public func remove(_ manifestUrl: String) {
+        change { list, s in
+            guard let i = list.firstIndex(where: { $0.manifestUrl == manifestUrl }) else { return false }
+            list.remove(at: i)
+            var at = s.obj("at") ?? [:], removed = s.obj("removed") ?? [:]
+            removed[manifestUrl] = nowMs(); at[manifestUrl] = nil
+            s["at"] = at; s["removed"] = removed
+            return true
+        }
     }
 
     public func syncDoc() -> JSONObject {
