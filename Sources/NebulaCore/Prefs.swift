@@ -35,7 +35,7 @@ public final class Prefs: @unchecked Sendable {
         set { put("autoplayNext", newValue) }
     }
     /// An unset caption preference leaves the engine's choice alone; a stored empty one is Off.
-    public var hasSubLang: Bool { get("subLang") is String }
+    public var hasSubLang: Bool { self.get("subLang") is String }
     /// Preferred caption language, as add-ons give it.
     public var subLang: String {
         get { (get("subLang") as? String) ?? "" }
