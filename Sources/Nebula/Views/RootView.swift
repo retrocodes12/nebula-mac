@@ -4,32 +4,45 @@ import NebulaCore
 
 struct RootView: View {
     @EnvironmentObject var model: AppModel
+    /// Esc on a pushed page goes Back (B5).
+    @State private var escMonitor: Any?
 
     var body: some View {
         ZStack {
             HStack(spacing: 0) {
                 Sidebar()
                 ZStack {
-                    // every tab stays alive under the others so a row keeps its place
+                    // every tab stays alive under the others so a row keeps its place — but only
+                    // the one on screen answers keys, the keyboard and VoiceOver: a hidden page's
+                    // buttons kept their shortcuts (⌘[ popped pages nobody could see)
                     ForEach(Tab.allCases) { t in
+                        let shown = model.tab == t && model.path.isEmpty
                         tabRoot(t)
-                            .opacity(model.tab == t && model.path.isEmpty ? 1 : 0)
-                            .allowsHitTesting(model.tab == t && model.path.isEmpty)
+                            .opacity(shown ? 1 : 0)
+                            .allowsHitTesting(shown)
+                            .disabled(!shown)
+                            .accessibilityHidden(!shown)
                     }
                     ForEach(Array(model.path.enumerated()), id: \.offset) { i, route in
                         // keyed by place in the stack (the same page can sit in it twice, apart),
                         // and by the page itself, so a new page in an old place starts fresh
+                        let shown = i == model.path.count - 1
                         page(route)
                             .id(route)
                             .background(Theme.bg)
-                            .opacity(i == model.path.count - 1 ? 1 : 0)
-                            .allowsHitTesting(i == model.path.count - 1)
+                            .opacity(shown ? 1 : 0)
+                            .allowsHitTesting(shown)
+                            .disabled(!shown)
+                            .accessibilityHidden(!shown)
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Theme.bg)
             }
             .opacity(model.player == nil ? 1 : 0)
+            // under a film the whole browse layer is asleep, its shortcuts with it
+            .disabled(model.player != nil)
+            .accessibilityHidden(model.player != nil)
 
             if let req = model.player {
                 PlayerScreen(request: req, hardwareDecoding: model.prefs.hardwareDecoding)
@@ -57,8 +70,32 @@ struct RootView: View {
         .background(Theme.bg)
         .ignoresSafeArea()
         .tint(model.accent)
+        .environment(\.nebulaAccent, model.accent)
         .preferredColorScheme(.dark)
         .task { await model.loadHome() }
+        .onAppear(perform: watchEscape)
+        .onDisappear {
+            if let m = escMonitor { NSEvent.removeMonitor(m); escMonitor = nil }
+        }
+        // a page pushed over Search must not leave the hidden field holding the keyboard: Esc
+        // (and every other key) went to a field nobody could see
+        .onChange(of: model.path.count) { n in
+            if n > 0, let w = NSApp.keyWindow, w.firstResponder is NSText { w.makeFirstResponder(nil) }
+        }
+    }
+
+    /// Esc goes Back from a pushed page, as the Back button does — not over a film (the player
+    /// has its own Esc) and not while a field is being typed in (Esc is the field's there).
+    private func watchEscape() {
+        guard escMonitor == nil else { return }
+        let m = model
+        escMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak m] ev in
+            guard ev.keyCode == 53, let m = m, m.player == nil, !m.path.isEmpty,
+                  ev.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty,
+                  !(NSApp.keyWindow?.firstResponder is NSText) else { return ev }
+            m.path.removeLast()
+            return nil
+        }
     }
 
     @ViewBuilder
@@ -151,13 +188,15 @@ struct Sidebar: View {
 }
 
 /// The mark the other Nebula apps wear: the accent disc with a play triangle, drawn not shipped.
+/// It takes the accent from the environment, not the model, so the model's every change does
+/// not redraw it.
 struct NebulaMark: View {
-    @EnvironmentObject var model: AppModel
+    @Environment(\.nebulaAccent) var accent
     var size: CGFloat = 22
     var body: some View {
         ZStack {
-            Circle().fill(model.accent)
-            Image(systemName: "play.fill").font(.system(size: size * 0.42, weight: .bold)).foregroundStyle(model.accent.readableInk).offset(x: size * 0.03)
+            Circle().fill(accent)
+            Image(systemName: "play.fill").font(.system(size: size * 0.42, weight: .bold)).foregroundStyle(accent.readableInk).offset(x: size * 0.03)
         }
         .frame(width: size, height: size)
     }

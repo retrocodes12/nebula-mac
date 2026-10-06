@@ -33,6 +33,9 @@ struct PlayerScreen: View {
     /// The Now Playing card and the system's remote commands: the play/pause key, AirPods,
     /// Control Center. Without it those went to Music, which started over the film.
     @State private var nowPlaying = NowPlaying()
+    /// The volume the viewer last chose here, kept in Settings once — when the player closes or
+    /// hands over to the next episode — rather than written to disk at every step of the slider.
+    @State private var chosenVolume: Double?
 
     enum PlayerMenu: String { case audio, subtitles, speed, info }
 
@@ -51,7 +54,7 @@ struct PlayerScreen: View {
             // the whole picture is a button: a click pauses, a double click goes full screen
             Color.clear.contentShape(Rectangle())
                 .onTapGesture(count: 2) { toggleFullScreen() }
-                .onTapGesture { if menu != nil { menu = nil } else { mpv.togglePause(); wake() } }
+                .onTapGesture { if menu != nil { menu = nil } else { playPause(); wake() } }
 
             if mpv.buffering && mpv.failure == nil {
                 ProgressView().controlSize(.large).tint(.white)
@@ -71,7 +74,6 @@ struct PlayerScreen: View {
         .onChange(of: mpv.timePos) { t in tick(t) }
         .onChange(of: mpv.ended) { e in if e { reachedEnd() } }
         .onChange(of: mpv.loaded) { l in if l { loadedNow() } }
-        .onChange(of: mpv.volume) { v in model.prefs.volume = v }
         .onChange(of: wantsAwake) { keepDisplayAwake($0) }
     }
 
@@ -109,8 +111,7 @@ struct PlayerScreen: View {
                 GlassCircle(icon: "gobackward.\(stepIcon)", label: "Back \(model.prefs.seekStep) seconds", size: 52) { mpv.seek(by: -Double(model.prefs.seekStep)); wake() }
                     .opacity(mpv.canStepBack ? 1 : 0.3)
                 GlassCircle(icon: mpv.ended ? "arrow.counterclockwise" : mpv.paused ? "play.fill" : "pause.fill", label: mpv.paused ? "Play" : "Pause", size: 72) {
-                    if mpv.ended && mpv.isLive { retry() }
-                    else if mpv.ended { mpv.seek(to: 0); mpv.setPaused(false) } else { mpv.togglePause() }
+                    playPause()
                     wake()
                 }
                 GlassCircle(icon: "goforward.\(stepIcon)", label: "Forward \(model.prefs.seekStep) seconds", size: 52) { mpv.seek(by: Double(model.prefs.seekStep)); wake() }
@@ -126,7 +127,7 @@ struct PlayerScreen: View {
                 scrubber
                 HStack(spacing: 10) {
                     GlassCircle(icon: mpv.muted || mpv.volume < 1 ? "speaker.slash.fill" : "speaker.wave.2.fill", label: "Mute", size: 38) { mpv.toggleMute() }
-                    Slider(value: Binding(get: { mpv.volume }, set: { mpv.setVolume($0) }), in: 0...100)
+                    Slider(value: Binding(get: { mpv.volume }, set: { setVolume($0) }), in: 0...100)
                         .frame(width: 110).tint(.white).controlSize(.small)
                     Spacer()
                     barButton("captions.bubble", "Subtitles", .subtitles)
@@ -373,6 +374,8 @@ struct PlayerScreen: View {
             nextBusy = false
             if let f = found {
                 save()
+                // the next player starts before this one has gone: it must find the volume chosen here
+                keepVolume()
                 model.play(f.0, target: target, from: f.1, fresh: true)
             } else {
                 close()
@@ -412,6 +415,7 @@ struct PlayerScreen: View {
         ManifestProxy.shared.release(manifestToken)
         manifestToken = nil
         save()
+        keepVolume()
         nowPlaying.finish()
         keepDisplayAwake(false)
         hideTask?.cancel()
@@ -444,15 +448,50 @@ struct PlayerScreen: View {
         }
     }
 
+    /// Play or pause — the centre button, a click on the picture, Space and K all mean this. At
+    /// the end of a file it plays again from the top, at the end of a live stream it reconnects;
+    /// Space used to toggle the pause on a film that had ended, which did nothing at all.
+    private func playPause() {
+        if mpv.ended && mpv.isLive { retry() }
+        else if mpv.ended { mpv.seek(to: 0); mpv.setPaused(false) }
+        else { mpv.togglePause() }
+    }
+
+    private func setVolume(_ v: Double) {
+        let level = min(130, max(0, v))
+        chosenVolume = level
+        mpv.setVolume(level)
+    }
+
+    /// The viewer's volume into Settings, once.
+    private func keepVolume() {
+        if let v = chosenVolume { model.prefs.volume = v }
+    }
+
+    /// The keys this screen answers to besides the arrows: Space, Esc and these letters.
+    private static let letters: Set<String> = ["f", "m", "k", "j", "l", "c", "a", "i", "n"]
+
     private func handleKey(_ ev: NSEvent) -> Bool {
-        if ev.modifierFlags.contains(.command) { return false }
+        if ev.modifierFlags.contains(.command) {
+            // ⌘[ is Back. Over a film it closes the open menu, else the player — it used to pop
+            // the page waiting unseen under the player instead
+            guard ev.charactersIgnoringModifiers == "[" else { return false }
+            if menu != nil { withAnimation(.easeOut(duration: 0.18)) { menu = nil }; wake() } else { close() }
+            return true
+        }
+        // a held key repeats thirty times a second. Only the arrows mean something held (seeking
+        // on, the volume going on up); a held Space or F flipped the film back and forth. The
+        // repeats of this screen's own keys are swallowed, everything else passes on
+        if ev.isARepeat && !(123...126).contains(ev.keyCode) {
+            return ev.keyCode == 49 || ev.keyCode == 53 || PlayerScreen.letters.contains(ev.charactersIgnoringModifiers?.lowercased() ?? "")
+        }
         let step = Double(model.prefs.seekStep)
         switch ev.keyCode {
-        case 49: mpv.togglePause()                                   // space
+        case 49: playPause()                                         // space
         case 123: mpv.seek(by: ev.modifierFlags.contains(.shift) ? -60 : -step)   // ←
         case 124: mpv.seek(by: ev.modifierFlags.contains(.shift) ? 60 : step)     // →
-        case 126: mpv.setVolume(mpv.volume + 5)                      // ↑
-        case 125: mpv.setVolume(mpv.volume - 5)                      // ↓
+        case 126: setVolume((chosenVolume ?? mpv.volume) + 5)        // ↑
+        case 125: setVolume((chosenVolume ?? mpv.volume) - 5)        // ↓
         case 53:                                                     // esc
             if menu != nil { menu = nil }
             else if let w = NSApp.keyWindow, w.styleMask.contains(.fullScreen) { w.toggleFullScreen(nil) }
@@ -461,7 +500,7 @@ struct PlayerScreen: View {
             switch ev.charactersIgnoringModifiers?.lowercased() {
             case "f": toggleFullScreen()
             case "m": mpv.toggleMute()
-            case "k": mpv.togglePause()
+            case "k": playPause()
             case "j": mpv.seek(by: -step)
             case "l": mpv.seek(by: step)
             case "c": menu = menu == .subtitles ? nil : .subtitles

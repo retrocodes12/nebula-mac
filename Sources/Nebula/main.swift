@@ -37,12 +37,28 @@ struct NebulaApp: App {
             CommandGroup(replacing: .newItem) {}
             CommandMenu("Go") {
                 ForEach(Array(Tab.allCases.enumerated()), id: \.element) { i, t in
-                    Button(t.title) { model.player = nil; model.select(t) }.keyboardShortcut(KeyEquivalent(Character(String(i + 1))), modifiers: .command)
+                    Button(t.title) { leavePlayer(); model.select(t) }.keyboardShortcut(KeyEquivalent(Character(String(i + 1))), modifiers: .command)
                 }
                 Divider()
-                Button("Back") { if !model.path.isEmpty { model.path.removeLast() } }.keyboardShortcut("[", modifiers: .command)
+                // ⌘F, the Mac's own key for it: the Search page with the cursor in its field
+                Button("Search…") { leavePlayer(); model.focusSearch() }.keyboardShortcut("f", modifiers: .command)
+                Divider()
+                // over a film, Back is the film's: it closes the player (the player's own ⌘[ first
+                // closes a menu it has open) and never pops the page waiting under it
+                Button("Back") {
+                    if model.player != nil { leavePlayer() } else if !model.path.isEmpty { model.path.removeLast() }
+                }
+                .keyboardShortcut("[", modifiers: .command)
             }
         }
+    }
+
+    /// A menu item that goes elsewhere closes the player first, and takes the window out of full
+    /// screen as the player's own Close does — it used to leave the page underneath full screen.
+    private func leavePlayer() {
+        guard model.player != nil else { return }
+        if let w = NSApp.keyWindow, w.styleMask.contains(.fullScreen) { w.toggleFullScreen(nil) }
+        model.player = nil
     }
 }
 
