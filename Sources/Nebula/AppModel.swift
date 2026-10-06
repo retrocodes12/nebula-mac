@@ -124,9 +124,6 @@ final class AppModel: ObservableObject {
     @Published var homeFailed = false
     /// Bumped by Try again, so every page built from the add-ons' catalogs (Discover) asks again.
     @Published var catalogEpoch = 0
-    /// The player that is playing right now — loaded, not paused, not at the end, not failed.
-    /// Set and cleared by that player only, so a player fading out cannot clear its successor's.
-    @Published var playingId: UUID?
     private var homeSig: String?
     private var homeSeq = 0
 

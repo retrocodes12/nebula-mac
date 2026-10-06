@@ -51,15 +51,19 @@ struct PhonePlayer: View {
     private var step: Double { Double(model.prefs.seekStep) }
 
     var body: some View {
+        // The black, the picture and the tap zones run edge to edge; everything that is a
+        // control stays inside the safe area — clear of the notch, the Dynamic Island and the
+        // home indicator, which in landscape are at the sides and the foot of the picture.
         ZStack {
-            Color.black
-            PhoneVideoSurface(controller: mpv)
+            Color.black.ignoresSafeArea()
+            PhoneVideoSurface(controller: mpv).ignoresSafeArea()
 
             // the picture is two halves: one tap wakes the chrome, two skip a step
             HStack(spacing: 0) {
                 tapZone(back: true)
                 tapZone(back: false)
             }
+            .ignoresSafeArea()
 
             if mpv.buffering && mpv.failure == nil {
                 ProgressView().controlSize(.large).tint(.white).allowsHitTesting(false)
@@ -75,7 +79,7 @@ struct PhonePlayer: View {
             if nextOffered, let n = next, mpv.failure == nil, !locked { nextPill(n) }
             if let f = mpv.failure { failureCard(f) }
         }
-        .ignoresSafeArea()
+        .background(keyboardKeys)
         .statusBarHidden(true)
         .persistentSystemOverlays(.hidden)
         .sheet(item: $sheet) { s in
@@ -115,11 +119,58 @@ struct PhonePlayer: View {
     /// after 30 s must not dim and lock in front of the spinner.
     private var wantsAwake: Bool { !mpv.paused && !mpv.ended && mpv.failure == nil }
 
+    /// The player that keeps the screen from locking. One at a time: the next episode's player
+    /// appears before the old one has gone, and the old one's farewell must not let the phone
+    /// lock under the new one. Kept here, not on the model — every change to the model redraws
+    /// every page alive under the player, and this changed on every pause.
+    private static var awakeOwner: UUID?
+
     /// The screen stays awake while playback is wanted, not while a paused or failed picture
-    /// sits there. The model holds whose it is, so a player on its way out cannot clear its
-    /// successor's.
+    /// sits there.
     private func awakeNow(_ on: Bool) {
-        if on { model.playingId = request.id } else if model.playingId == request.id { model.playingId = nil }
+        if on {
+            PhonePlayer.awakeOwner = request.id
+            UIApplication.shared.isIdleTimerDisabled = true
+        } else if PhonePlayer.awakeOwner == request.id {
+            PhonePlayer.awakeOwner = nil
+            UIApplication.shared.isIdleTimerDisabled = false
+        }
+    }
+
+    // MARK: landscape
+
+    /// The player that holds a phone in landscape, one at a time like the screen lock.
+    private static var landscapeOwner: UUID?
+
+    /// A film is wide: on a phone the player turns the screen to landscape while it is up, as
+    /// the system's own player does. An iPad is left as it is held.
+    private func holdLandscape() {
+        guard UIDevice.current.userInterfaceIdiom == .phone else { return }
+        // which way the phone is held, for the way back (counted: begin here, end on release)
+        if PhonePlayer.landscapeOwner == nil { UIDevice.current.beginGeneratingDeviceOrientationNotifications() }
+        PhonePlayer.landscapeOwner = request.id
+        PhoneDelegate.held = .landscape
+        PhonePlayer.turn(to: .landscape)
+    }
+
+    /// Back to turning freely once the player is gone — upright, unless the phone is still held
+    /// on its side.
+    private func releaseLandscape() {
+        guard PhonePlayer.landscapeOwner == request.id else { return }
+        PhonePlayer.landscapeOwner = nil
+        PhoneDelegate.held = nil
+        PhonePlayer.turn(to: UIDevice.current.orientation.isLandscape ? nil : .portrait)
+        UIDevice.current.endGeneratingDeviceOrientationNotifications()
+    }
+
+    private static func turn(to mask: UIInterfaceOrientationMask?) {
+        for case let scene as UIWindowScene in UIApplication.shared.connectedScenes {
+            // asked again what the app supports (PhoneDelegate), then turned
+            for window in scene.windows { window.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations() }
+            if let m = mask {
+                scene.requestGeometryUpdate(UIWindowScene.GeometryPreferences.iOS(interfaceOrientations: m)) { _ in }
+            }
+        }
     }
 
     // MARK: sound
@@ -158,17 +209,45 @@ struct PhonePlayer: View {
         Color.clear
             .contentShape(Rectangle())
             .onTapGesture(count: 2) {
-                guard !locked, back ? mpv.canStepBack : mpv.canStepForward else { return }
-                mpv.seek(by: back ? -step : step)
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                show(flash: (back ? "−" : "+") + "\(Int(step))s")
-                wake()
+                if skip(forward: !back) { UIImpactFeedbackGenerator(style: .light).impactOccurred() }
             }
             .onTapGesture {
                 if locked { show(flash: "Locked"); return }
                 withAnimation(.easeOut(duration: 0.2)) { chromeVisible.toggle() }
                 if chromeVisible { wake() } else { hideTask?.cancel() }
             }
+    }
+
+    /// A step back or forward — a double tap on either half, or a keyboard's arrows. False when
+    /// there was nowhere to go (locked, or a live stream already at its edge).
+    @discardableResult
+    private func skip(forward: Bool) -> Bool {
+        guard !locked, forward ? mpv.canStepForward : mpv.canStepBack else { return false }
+        mpv.seek(by: forward ? step : -step)
+        show(flash: (forward ? "+" : "−") + "\(Int(step))s")
+        wake()
+        return true
+    }
+
+    /// Play or pause — the centre button and a keyboard's Space. At the end of a file it plays
+    /// again from the top; at the end of a live stream it reconnects.
+    private func playPause() {
+        if mpv.ended && mpv.isLive { retry() }
+        else if mpv.ended { mpv.seek(to: 0); mpv.setPaused(false) }
+        else { mpv.togglePause() }
+    }
+
+    /// A keyboard on an iPad (or a phone): Space plays and pauses, ← → skip, Esc closes. A
+    /// shortcut has to belong to a control, so these are buttons nobody sees.
+    private var keyboardKeys: some View {
+        ZStack {
+            Button("Play or pause") { playPause(); wake() }.keyboardShortcut(.space, modifiers: [])
+            Button("Back") { skip(forward: false) }.keyboardShortcut(.leftArrow, modifiers: [])
+            Button("Forward") { skip(forward: true) }.keyboardShortcut(.rightArrow, modifiers: [])
+            Button("Close") { close() }.keyboardShortcut(.escape, modifiers: [])
+        }
+        .opacity(0)
+        .accessibilityHidden(true)
     }
 
     private func flashLabel(_ text: String) -> some View {
@@ -207,7 +286,9 @@ struct PhonePlayer: View {
                 Spacer(minLength: 8)
                 GlassCircle(icon: "lock.open", label: "Lock the screen", size: 38) { locked = true; hideTask?.cancel() }
             }
-            .padding(.horizontal, 16).padding(.top, 52)
+            // inside the safe area now, so only a small margin of its own (it was 52 points down
+            // from the very top, which put it under the Dynamic Island in portrait)
+            .padding(.horizontal, 12).padding(.top, 8)
 
             Spacer()
 
@@ -216,8 +297,7 @@ struct PhonePlayer: View {
                     .opacity(mpv.canStepBack ? 1 : 0.3)
                 GlassCircle(icon: mpv.ended ? "arrow.counterclockwise" : mpv.paused ? "play.fill" : "pause.fill",
                             label: mpv.paused ? "Play" : "Pause", size: 76) {
-                    if mpv.ended && mpv.isLive { retry() }
-                    else if mpv.ended { mpv.seek(to: 0); mpv.setPaused(false) } else { mpv.togglePause() }
+                    playPause()
                     wake()
                 }
                 GlassCircle(icon: "goforward.\(stepIcon)", label: "Forward \(model.prefs.seekStep) seconds", size: 52) { mpv.seek(by: step); wake() }
@@ -238,12 +318,14 @@ struct PhonePlayer: View {
                     barButton("info.circle", "Info", .info)
                 }
             }
-            .padding(.horizontal, 16).padding(.bottom, 34)
+            .padding(.horizontal, 12).padding(.bottom, 8)
         }
+        // the shade behind the controls still runs to the screen's edges
         .background(
             LinearGradient(stops: [.init(color: .black.opacity(0.6), location: 0), .init(color: .clear, location: 0.26),
                                    .init(color: .clear, location: 0.58), .init(color: .black.opacity(0.75), location: 1)],
                            startPoint: .top, endPoint: .bottom)
+                .ignoresSafeArea()
                 .allowsHitTesting(false)
         )
     }
@@ -283,7 +365,7 @@ struct PhonePlayer: View {
             HStack {
                 Spacer()
                 GlassCircle(icon: "lock.fill", label: "Unlock", size: 44) { locked = false; wake() }
-                    .padding(.trailing, 16).padding(.top, 52)
+                    .padding(.trailing, 12).padding(.top, 8)
             }
             Spacer()
         }
@@ -347,8 +429,9 @@ struct PhonePlayer: View {
                     .environment(\.colorScheme, .dark)
                 }
                 .buttonStyle(.plain)
-                .padding(.trailing, 16)
-                .padding(.bottom, chromeShown ? 150 : 46)
+                .padding(.trailing, 12)
+                // above the scrubber and its buttons (98 points and their margin) while they show
+                .padding(.bottom, chromeShown ? 118 : 12)
             }
         }
         .animation(.easeOut(duration: 0.2), value: chromeShown)
@@ -369,6 +452,7 @@ struct PhonePlayer: View {
                          step: step, art: t.episode?.thumbnail ?? t.item.background ?? t.item.poster)
         // an onChange does not fire for the value a view starts with, and this one starts true
         awakeNow(wantsAwake)
+        holdLandscape()
         let s = request.stream
         sourceTask = Task {
             let got = await PlaybackRules.source(for: s, maxHeight: model.prefs.maxHeight, stremio: model.stremio)
@@ -482,7 +566,10 @@ struct PhonePlayer: View {
         hideTask?.cancel()
         flashTask?.cancel()
         nowPlaying.finish()
-        if model.playingId == request.id { model.playingId = nil }
+        awakeNow(false)
+        // the screen turns back only when no other player has taken it over (the next episode's
+        // appears before this one is gone, and keeps it in landscape)
+        if model.player == nil || model.player?.id == request.id { releaseLandscape() }
         // the sound goes back once the engine has let go of its output, so the music the viewer
         // had on is told to go on — unless another player has taken the screen meanwhile
         let m = model

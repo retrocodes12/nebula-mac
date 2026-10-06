@@ -54,6 +54,15 @@ enum Sync {
 }
 
 final class PhoneDelegate: NSObject, UIApplicationDelegate {
+    /// The way a phone's screen is held while its player is up (landscape), set and cleared by
+    /// that player; nil lets the app turn as the Info.plist allows.
+    static var held: UIInterfaceOrientationMask?
+
+    func application(_ application: UIApplication, supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {
+        if let h = PhoneDelegate.held { return h }
+        return UIDevice.current.userInterfaceIdiom == .pad ? .all : .allButUpsideDown
+    }
+
     func application(_ application: UIApplication,
                      didFinishLaunchingWithOptions options: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         // the build machine's way in: `simctl launch --console … --args --smoke <address>` plays

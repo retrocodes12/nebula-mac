@@ -8,6 +8,9 @@ import NebulaCore
 /// one set of rules, so a title opened here behaves like a title opened there.
 struct PhoneRoot: View {
     @EnvironmentObject var model: AppModel
+    /// How far the top page has been pulled to the right by a swipe in from the screen's left
+    /// edge — the way back every iPhone app has; the page under it shows as it goes.
+    @State private var backDrag: CGFloat = 0
 
     private var pushed: Bool { !model.path.isEmpty }
 
@@ -28,27 +31,38 @@ struct PhoneRoot: View {
             // alone, the art stopped at the status bar with a hard edge.
             GeometryReader { geo in
                 let top = PhoneRoot.statusBar(geo)
+                let last = model.path.count - 1
                 ZStack(alignment: .topLeading) {
+                    // only the page on screen answers touches, the keyboard and VoiceOver; the one
+                    // under a page being swiped away is drawn, and wakes when it is let go
                     ForEach(Tab.allCases) { t in
+                        let live = model.tab == t && !pushed
+                        let shown = live || (model.tab == t && last == 0 && backDrag > 0)
                         tabRoot(t)
                             .safeAreaInset(edge: .bottom) { Color.clear.frame(height: 68) }
                             .environment(\.topBleed, top)
                             .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
                             .clipShape(UnderStatusBar(top: top))
-                            .opacity(model.tab == t && !pushed ? 1 : 0)
-                            .allowsHitTesting(model.tab == t && !pushed)
+                            .opacity(shown ? 1 : 0)
+                            .allowsHitTesting(live)
+                            .disabled(!shown)
+                            .accessibilityHidden(!shown)
                     }
                     ForEach(Array(model.path.enumerated()), id: \.offset) { i, route in
                         // keyed by place in the stack (the same page can sit in it twice, apart),
                         // and by the page itself, so a new page in an old place starts fresh
+                        let shown = i == last || (i == last - 1 && backDrag > 0)
                         page(route)
                             .id(route)
                             .environment(\.topBleed, top)
                             .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
                             .clipShape(UnderStatusBar(top: top))
                             .background(Theme.bg)
-                            .opacity(i == model.path.count - 1 ? 1 : 0)
-                            .allowsHitTesting(i == model.path.count - 1)
+                            .offset(x: i == last ? backDrag : 0)
+                            .opacity(shown ? 1 : 0)
+                            .allowsHitTesting(i == last)
+                            .disabled(!shown)
+                            .accessibilityHidden(!shown)
                     }
                     // a soft shade under the status bar, so its clock reads over bright art and
                     // over whatever scrolls up beneath it — no line where the art begins (none in
@@ -62,6 +76,7 @@ struct PhoneRoot: View {
                             .offset(y: -top)
                             .allowsHitTesting(false)
                     }
+                    if pushed { edgeSwipe(width: geo.size.width, height: geo.size.height) }
                 }
             }
 
@@ -69,10 +84,11 @@ struct PhoneRoot: View {
                 VStack { Spacer(); TabPill() }
                     .transition(.opacity)
             }
-
-            if let t = model.toast { toast(t) }
         }
         .opacity(model.player == nil ? 1 : 0)
+        // under a film the pages are asleep: no VoiceOver wandering into them, no keys
+        .disabled(model.player != nil)
+        .accessibilityHidden(model.player != nil)
         .overlay {
             if let req = model.player {
                 PhonePlayer(request: req, hardwareDecoding: model.prefs.hardwareDecoding)
@@ -80,27 +96,56 @@ struct PhoneRoot: View {
                     .transition(.opacity)
             }
         }
+        // over the player too: a toast said under it ("Added to My List", a sign-out) went unseen
+        .overlay {
+            if let t = model.toast { toast(t) }
+        }
         .animation(.easeOut(duration: 0.2), value: model.toast)
         .animation(.easeOut(duration: 0.2), value: model.player?.id)
         .animation(.easeOut(duration: 0.18), value: pushed)
         .tint(model.accent)
+        .environment(\.nebulaAccent, model.accent)
         .preferredColorScheme(.dark)
         // the pages' type follows the reader's text size (Theme's `scaledFont`) up to the second
         // accessibility size; past it a title's art could no longer hold its own title
         .dynamicTypeSize(...DynamicTypeSize.accessibility2)
         .task { await model.loadHome() }
-        // ONE owner for the screen lock. Each player used to set it on appear and clear it on
-        // disappear, and the old player fading out after the next episode's had appeared
-        // switched auto-lock back on in the middle of it. It follows `playingId` — a picture
-        // that is actually moving — so a paused or failed player lets the phone sleep.
-        .onChange(of: model.playingId != nil) { moving in
-            UIApplication.shared.isIdleTimerDisabled = moving
-        }
-        // the sound is taken when a player opens; the player gives it back once its engine is
-        // really gone (PhonePlayer.finish), not after a guess at how long that takes
+        // the screen lock has ONE owner now, the player that is playing (PhonePlayer.awakeNow);
+        // the sound is taken when a player opens, and the player gives it back once its engine
+        // is really gone (PhonePlayer.finish), not after a guess at how long that takes
         .onChange(of: model.player != nil) { open in
             if open { Audio.begin() }
         }
+    }
+
+    /// A strip down the left edge of a pushed page: drag it right and the page follows the
+    /// finger, the one under it showing; let go past a third of the screen (or with a flick) and
+    /// it goes Back. A strip and not the whole page, so the rows of posters still scroll sideways
+    /// under a finger — only a drag that starts in the first 20 points is the edge's.
+    private func edgeSwipe(width: CGFloat, height: CGFloat) -> some View {
+        Color.clear
+            .frame(width: 20, height: height)
+            .contentShape(Rectangle())
+            .gesture(
+                // measured on the screen, not the strip: the page moving under the finger must
+                // not shorten the drag it is following
+                DragGesture(minimumDistance: 10, coordinateSpace: .global)
+                    .onChanged { g in backDrag = max(0, g.translation.width) }
+                    .onEnded { g in
+                        let back = g.translation.width > width * 0.33 || g.predictedEndTranslation.width > width * 0.6
+                        guard back else {
+                            withAnimation(.easeOut(duration: 0.2)) { backDrag = 0 }
+                            return
+                        }
+                        withAnimation(.easeOut(duration: 0.18)) { backDrag = width }
+                        Task { @MainActor in
+                            try? await Task.sleep(nanoseconds: 180_000_000)
+                            if !model.path.isEmpty { model.path.removeLast() }
+                            backDrag = 0
+                        }
+                    }
+            )
+            .accessibilityHidden(true)
     }
 
     @ViewBuilder
@@ -142,7 +187,8 @@ struct PhoneRoot: View {
                 .overlay(Capsule().strokeBorder(t.isError ? Theme.danger.opacity(0.7) : .white.opacity(0.14)))
                 .environment(\.colorScheme, .dark)
                 .padding(.horizontal, 20)
-                .padding(.bottom, pushed ? 28 : 96)
+                // over a player it sits above the scrubber and its buttons
+                .padding(.bottom, model.player != nil ? 128 : pushed ? 28 : 96)
         }
         .transition(.opacity.combined(with: .move(edge: .bottom)))
         .allowsHitTesting(false)

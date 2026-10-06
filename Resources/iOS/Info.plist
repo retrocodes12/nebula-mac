@@ -12,6 +12,9 @@
 	<key>CFBundleVersion</key><string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSRequiresIPhoneOS</key><true/>
 	<key>UIUserInterfaceStyle</key><string>Dark</string>
+	<!-- a phone with a 120 Hz screen draws scrolling and the player's chrome at 120 frames a
+	     second only when the app says it can -->
+	<key>CADisableMinimumFrameDurationOnPhone</key><true/>
 	<key>UIRequiredDeviceCapabilities</key>
 	<array><string>arm64</string></array>
 	<key>UISupportedInterfaceOrientations</key>
