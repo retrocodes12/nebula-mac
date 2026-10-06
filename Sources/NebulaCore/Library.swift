@@ -19,10 +19,21 @@ public final class LibraryStore: @unchecked Sendable {
     let store: Store
     public var onChange: (() -> Void)?
     private let writeLock = NSLock()
+    /// The document, parsed once (like ProgressStore's). Every card asks whether its title is
+    /// saved each time it draws, and each ask parsed the whole file; only `mutate` writes it.
+    private var cache: JSONObject?
+    private let lock = NSLock()
 
     public init(store: Store) { self.store = store }
 
-    public func doc() -> JSONObject { store.object("library") }
+    public func doc() -> JSONObject {
+        lock.lock(); defer { lock.unlock() }
+        if let c = cache { return c }
+        let o = store.object("library")
+        cache = o
+        return o
+    }
+
     public func replaceAll(_ o: JSONObject) { mutate(notify: false) { $0 = o; return true } }
 
     /// Read, change and write My List as one step, so a sync merge and a + pressed at the same
@@ -31,7 +42,10 @@ public final class LibraryStore: @unchecked Sendable {
         writeLock.lock()
         var o = doc()
         let changed = body(&o)
-        if changed { store.setObject("library", o) }
+        if changed {
+            lock.lock(); cache = o; lock.unlock()
+            store.setObject("library", o)
+        }
         writeLock.unlock()
         if changed && notify { onChange?() }
     }

@@ -3,11 +3,23 @@ import Foundation
 /// Device-local preferences. Nothing here syncs.
 public final class Prefs: @unchecked Sendable {
     let store: Store
+    /// The document, parsed once. Every read used to parse the whole file again, and the player
+    /// reads several of these each time it draws; only this object writes the file.
+    private var cache: JSONObject?
+    private let lock = NSLock()
+
     public init(store: Store) { self.store = store }
 
-    private func get(_ k: String) -> Any? { store.object("prefs")[k] }
+    private func get(_ k: String) -> Any? {
+        lock.lock(); defer { lock.unlock() }
+        if cache == nil { cache = store.object("prefs") }
+        return cache?[k]
+    }
+
     private func put(_ k: String, _ v: Any) {
-        var o = store.object("prefs"); o[k] = v
+        lock.lock(); defer { lock.unlock() }
+        var o = cache ?? store.object("prefs"); o[k] = v
+        cache = o
         store.setObject("prefs", o)
     }
 

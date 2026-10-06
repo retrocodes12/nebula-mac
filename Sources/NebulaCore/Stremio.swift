@@ -157,10 +157,14 @@ public struct Stremio: Sendable {
         return Stremio.parseMetas(try await getJSON(u), fallbackType: c.type)
     }
 
+    /// A catalog's titles, each once. An add-on that lists the same id twice (it happens: a title
+    /// in two of its sources) gave two cards with one identity, and a row of cards keyed by id
+    /// draws a duplicate wrongly or drops a neighbour; the first one listed is kept.
     public static func parseMetas(_ j: JSONObject, fallbackType: String) -> [MetaItem] {
-        j.objs("metas").compactMap { m in
+        var seen = Set<String>()
+        return j.objs("metas").compactMap { m in
             let id = m.str("id")
-            if id.isEmpty { return nil }
+            if id.isEmpty || !seen.insert(id).inserted { return nil }
             let genres = (m.strs("genres") ?? m.strs("genre") ?? [])
                 .map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
             return MetaItem(id: id, type: m.text("type") ?? fallbackType, name: m.text("name") ?? id,
@@ -205,10 +209,12 @@ public struct Stremio: Sendable {
             videos: parseVideos(meta.objs("videos")))
     }
 
+    /// A series' episodes, each once (the same rule as `parseMetas`: the episode list is keyed by id).
     static func parseVideos(_ vids: [JSONObject]) -> [Episode] {
-        vids.compactMap { v in
+        var seen = Set<String>()
+        return vids.compactMap { v in
             let id = v.str("id")
-            if id.isEmpty { return nil }
+            if id.isEmpty || !seen.insert(id).inserted { return nil }
             let ep = v.optInt("episode") ?? v.optInt("number")
             let fallback = ("Episode " + (ep.map(String.init) ?? "")).trimmingCharacters(in: .whitespaces)
             return Episode(id: id, season: v.optInt("season") ?? 1, episode: ep,

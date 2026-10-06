@@ -179,6 +179,18 @@ final class ManifestTests: XCTestCase {
         XCTAssertTrue(Stremio.isWeb(" http://x.test/y "))
         XCTAssertFalse(Stremio.isWeb("smb://nas/film.mkv"))
     }
+
+    /// 2026-10-07: an add-on that lists one id twice (or none at all) gave cards and episodes
+    /// that shared an identity; each id is kept once, the first one listed.
+    func testDuplicateAndEmptyIdsAreDropped() {
+        let metas = JSON.object(#"{"metas":[{"id":"tt1","name":"First"},{"id":"","name":"Nameless"},{"name":"No id"},{"id":"tt1","name":"Again"},{"id":"tt2","name":"Second"}]}"#)!
+        let items = Stremio.parseMetas(metas, fallbackType: "movie")
+        XCTAssertEqual(items.map(\.id), ["tt1", "tt2"])
+        XCTAssertEqual(items.first?.name, "First", "the first one listed is kept")
+        let meta = Stremio.parseFullMeta(JSON.object(#"{"name":"Show","videos":[{"id":"tt9:1:1","season":1,"episode":1},{"id":""},{"id":"tt9:1:1","season":1,"episode":1,"name":"Twice"},{"id":"tt9:1:2","season":1,"episode":2}]}"#)!)
+        XCTAssertEqual(meta.videos.map(\.id), ["tt9:1:1", "tt9:1:2"])
+        XCTAssertEqual(meta.videos.first?.name, "Episode 1")
+    }
 }
 
 final class ClearKeyTests: XCTestCase {
@@ -705,6 +717,22 @@ final class BadgeTests: XCTestCase {
         XCTAssertEqual(f.langs, "Hindi + English + French")
         XCTAssertEqual(f.size, "2.0 GB")
         XCTAssertEqual(f.bitrate, "5 Mbps")
+    }
+
+    /// 2026-10-07: a row's words are read once, as the add-on answers — the same words the row
+    /// used to read for itself every time it was drawn.
+    func testARowIsReadOnce() {
+        let s = StreamItem(name: "Torrentio\n4k 🎬 | DV", title: "Film.2160p.HDR10.DDP.5.1\n👤 12 💾 4 GB", url: "https://x.test/a.mkv")
+        let t = StreamRowText(s, addonName: "Torrentio")
+        XCTAssertEqual(t.plate, StreamBadges.Plate(res: "4K", tag: "ULTRA HD"))
+        XCTAssertEqual(t.name, "DV")
+        XCTAssertEqual(t.badges.first, "dolby_vision.png")
+        XCTAssertEqual(t.facts, "4 GB  ·  12 seeds")
+        XCTAssertEqual(t, StreamRowText(s, addonName: "Torrentio"), "the same row reads the same")
+        // an add-on's name becomes a pattern once, and each name keeps its own
+        XCTAssertEqual(StreamBadges.cleanName("Alpha · x", addonName: "Alpha"), "x")
+        XCTAssertEqual(StreamBadges.cleanName("Alpha · x", addonName: "Beta"), "Alpha · x")
+        XCTAssertEqual(StreamBadges.cleanName("Alpha · y", addonName: "Alpha"), "y")
     }
 }
 

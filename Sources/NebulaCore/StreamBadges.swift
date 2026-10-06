@@ -116,12 +116,30 @@ public enum StreamBadges {
         ("🇮🇳", "Hindi"), ("🇵🇱", "Polish"), ("🇧🇷", "Portuguese"), ("🇷🇺", "Russian"), ("🇯🇵", "Japanese"), ("🇰🇷", "Korean"),
     ]
 
+    /// One pattern per add-on name, made once: every row used to compile its add-on's name into
+    /// a fresh expression, a hundred times over for one add-on's list.
+    final class NamePatterns: @unchecked Sendable {
+        private let lock = NSLock()
+        private var made: [String: NSRegularExpression] = [:]
+
+        func pattern(_ name: String) -> NSRegularExpression {
+            lock.lock(); defer { lock.unlock() }
+            if let r = made[name] { return r }
+            let r = StreamBadges.rx("\\b" + NSRegularExpression.escapedPattern(for: name) + "\\b")
+            if made.count >= 64 { made.removeAll() }            // a handful of add-ons; never a leak
+            made[name] = r
+            return r
+        }
+    }
+
+    static let namePatterns = NamePatterns()
+
     /// The row sits under its add-on's heading and beside its own plate, so the name only has to
     /// say which RELEASE this is.
     public static func cleanName(_ raw: String, addonName: String?) -> String {
         var t = strip(reEmoji, raw.replacingOccurrences(of: "\n", with: " "))
         if let a = addonName, !a.trimmingCharacters(in: .whitespaces).isEmpty {
-            t = strip(rx("\\b" + NSRegularExpression.escapedPattern(for: a) + "\\b"), t)
+            t = strip(namePatterns.pattern(a), t)
         }
         t = strip(reRes, t)
         t = strip(reSeps, t, with: " · ")
@@ -228,5 +246,30 @@ public enum StreamBadges {
         if let p = provider { line.append(p) }
         return Facts(line: line.joined(separator: "  ·  "), desc: desc.joined(separator: " · "),
                      size: size, bitrate: bitrate, seeds: seeds, langs: langs, provider: provider)
+    }
+}
+
+/// What one stream row says — its plate, its badges, its name, the line under the name and the
+/// facts — read ONCE, off the main thread, as the add-on's answer comes in. The row used to read
+/// all of it with some forty expressions every time it was drawn, and a streams page is drawn
+/// again for every hover, every section that lands and every tap that waits.
+public struct StreamRowText: Equatable, Sendable {
+    public var plate: StreamBadges.Plate?
+    public var badges: [String]
+    public var name: String
+    public var desc: String
+    public var facts: String
+
+    public init(_ stream: StreamItem, addonName: String?) {
+        let raw = stream.name + "\n" + stream.title + "\n" + stream.fileName
+        let match = StreamBadges.match(raw)
+        // the rules that drew a badge also take their words out of the description, so a row
+        // does not say "HDR · Atmos" beside the HDR and Atmos badges
+        let f = StreamBadges.facts(videoSize: stream.videoSize, text: stream.title, fired: match.fired)
+        plate = StreamBadges.plate(raw)
+        badges = match.badges
+        name = StreamBadges.cleanName(stream.name, addonName: addonName)
+        desc = StreamBadges.cleanDesc(f.desc)
+        facts = f.line
     }
 }
