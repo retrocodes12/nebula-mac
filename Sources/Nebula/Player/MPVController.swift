@@ -89,7 +89,14 @@ final class MPVController: ObservableObject {
         set("idle", "yes")
         set("user-agent", MPVController.userAgent)
         set("network-timeout", "30")
-        set("cache", "yes"); set("demuxer-max-bytes", "256MiB"); set("demuxer-readahead-secs", "120")
+        set("cache", "yes"); set("demuxer-readahead-secs", "120")
+        #if os(iOS)
+        // a phone has a fraction of a Mac's memory and iOS ends an app that takes too much:
+        // 96 MiB ahead is still minutes of 1080p
+        set("demuxer-max-bytes", "96MiB")
+        #else
+        set("demuxer-max-bytes", "256MiB")
+        #endif
         set("sub-auto", "no"); set("sub-visibility", "yes")
         set("sub-font-size", "44"); set("sub-border-size", "2.4"); set("sub-shadow-offset", "0")
         set("audio-channels", "auto-safe")
@@ -295,6 +302,8 @@ final class MPVController: ObservableObject {
     }
 
     private var lastPublishedPos: Double = -1
+    /// The whole seconds of cache ahead last published (on the engine's queue, like the position).
+    private var lastPublishedCache: Int64 = -1
 
     private func handle(_ ev: mpv_event) {
         switch ev.event_id {
@@ -321,7 +330,14 @@ final class MPVController: ObservableObject {
             case "volume": if let v = double { publish { $0.volume = v } }
             case "mute": if let f = flag { publish { $0.muted = f } }
             case "speed": if let v = double { publish { $0.speed = v } }
-            case "demuxer-cache-duration": publish { $0.cacheAhead = double ?? 0 }
+            case "demuxer-cache-duration":
+                // reported many times a second; only the whole seconds are ever shown, and each
+                // publish redrew the player and rewrote the Now Playing card
+                let v = double ?? 0
+                let whole = JSON.whole(v) ?? 0
+                if whole == lastPublishedCache { return }
+                lastPublishedCache = whole
+                publish { $0.cacheAhead = v }
             case "seekable": if let f = flag { publish { $0.seekable = f } }
             case "track-list":
                 let t = readTracks()

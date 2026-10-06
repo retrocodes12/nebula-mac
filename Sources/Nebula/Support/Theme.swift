@@ -43,16 +43,6 @@ extension Theme {
     static let detailHeight: CGFloat = 480
     #endif
 
-    /// A window caps a reading column at a comfortable width. A phone is narrower than any of
-    /// those caps already, so there it means "fill what there is".
-    static func cap(_ points: CGFloat) -> CGFloat {
-        #if os(iOS)
-        return .infinity
-        #else
-        return points
-        #endif
-    }
-
     /// Where a pushed page's Back button sits: just under a phone's status bar, and clear of a
     /// window's traffic lights. Measured from the top of the page's frame, which on a phone is
     /// the status bar's foot even when the page's art runs up under it — an overlay is laid out
@@ -77,10 +67,117 @@ extension Theme {
 /// and hands it down; everywhere else it is 0 and nothing moves.
 private struct TopBleedKey: EnvironmentKey { static let defaultValue: CGFloat = 0 }
 
+/// The app's one accent, handed down once from the root. A control that only wants the colour
+/// (the pill, the mark) used to watch the whole model for it, and so was drawn again for every
+/// change the model announced — a resume point saved, a toast, a tab.
+private struct AccentKey: EnvironmentKey { static let defaultValue = Color(hex: "#E50914") }
+
 extension EnvironmentValues {
     var topBleed: CGFloat {
         get { self[TopBleedKey.self] }
         set { self[TopBleedKey.self] = newValue }
+    }
+
+    var nebulaAccent: Color {
+        get { self[AccentKey.self] }
+        set { self[AccentKey.self] = newValue }
+    }
+}
+
+/// A reading column (a synopsis, Settings, the add-on list): capped at a comfortable width in a
+/// window and across an iPad's full width; a phone — or an iPad in a narrow split — is narrower
+/// than any of the caps already, so there it fills what there is.
+struct ReadingCap: ViewModifier {
+    let points: CGFloat
+    let alignment: Alignment
+    #if os(iOS)
+    @Environment(\.horizontalSizeClass) private var sizeClass
+    #endif
+
+    func body(content: Content) -> some View {
+        #if os(iOS)
+        content.frame(maxWidth: sizeClass == .regular ? points : .infinity, alignment: alignment)
+        #else
+        content.frame(maxWidth: points, alignment: alignment)
+        #endif
+    }
+}
+
+/// The facts under a title ("SERIES · DRAMA · 52 min · 2022– · ★ 7.7") on as many lines as the
+/// page needs, broken only between facts, with a dot only between two facts that share a line —
+/// as one wrapped string, a line could end on its "·".
+struct FactsLine: View {
+    let parts: [String]
+
+    var body: some View {
+        FactsFlow {
+            ForEach(Array(parts.enumerated()), id: \.offset) { i, part in
+                if i > 0 {
+                    Text("\u{00A0}\u{00A0}·\u{00A0}\u{00A0}").layoutValue(key: FactsFlow.Dot.self, value: true)
+                }
+                // inside one fact ("52 min", "★ 7.7") the spaces do not break
+                Text(part.replacingOccurrences(of: " ", with: "\u{00A0}")).lineLimit(1)
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(parts.joined(separator: ", "))
+    }
+}
+
+/// Lays facts out left to right, a new line when the next one does not fit; a dot is placed only
+/// when the facts on both sides of it share a line.
+struct FactsFlow: Layout {
+    var lineSpacing: CGFloat = 2
+
+    struct Dot: LayoutValueKey { static let defaultValue = false }
+
+    /// Each subview's frame, nil for a dot that falls where a line breaks; and the size of it all.
+    private func arrange(_ maxWidth: CGFloat, _ subviews: Subviews) -> (frames: [CGRect?], size: CGSize) {
+        var frames = [CGRect?](repeating: nil, count: subviews.count)
+        var x: CGFloat = 0, y: CGFloat = 0, lineHeight: CGFloat = 0, widest: CGFloat = 0
+        var dot: Int?                                           // the dot before the next fact
+        for i in subviews.indices {
+            let v = subviews[i]
+            if v[Dot.self] { dot = i; continue }
+            let size = v.sizeThatFits(.unspecified)
+            let w = min(size.width, maxWidth)
+            let d = dot.map { subviews[$0].sizeThatFits(.unspecified) } ?? .zero
+            if x > 0 && x + d.width + w > maxWidth {
+                // the next line: the dot between the two is not drawn
+                y += lineHeight + lineSpacing
+                x = 0
+                lineHeight = 0
+            } else if let di = dot, x > 0 {
+                frames[di] = CGRect(x: x, y: y, width: d.width, height: d.height)
+                x += d.width
+                lineHeight = max(lineHeight, d.height)
+            }
+            dot = nil
+            frames[i] = CGRect(x: x, y: y, width: w, height: size.height)
+            x += w
+            lineHeight = max(lineHeight, size.height)
+            widest = max(widest, x)
+        }
+        return (frames, CGSize(width: widest, height: y + lineHeight))
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        arrange(proposal.width ?? .infinity, subviews).size
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        // the same width the size was worked out for, so the lines break in the same places
+        let width = proposal.width.map { $0.isFinite ? $0 : bounds.width } ?? bounds.width
+        let frames = arrange(width, subviews).frames
+        for i in subviews.indices {
+            if let f = frames[i] {
+                subviews[i].place(at: CGPoint(x: bounds.minX + f.minX, y: bounds.minY + f.minY),
+                                  proposal: ProposedViewSize(width: f.width, height: f.height))
+            } else {
+                // a dot at a line's break: a layout cannot hide a subview, so it goes far off the page
+                subviews[i].place(at: CGPoint(x: bounds.minX - 100_000, y: bounds.minY), proposal: .unspecified)
+            }
+        }
     }
 }
 
@@ -167,6 +264,11 @@ extension View {
         #endif
     }
 
+    /// A reading column `points` wide at most where there is room for more (ReadingCap).
+    func readingCap(_ points: CGFloat, alignment: Alignment = .center) -> some View {
+        modifier(ReadingCap(points: points, alignment: alignment))
+    }
+
     /// On a phone, at least `side` points to touch (Apple's minimum is 44), whatever size the
     /// control is drawn at. A window's pointer needs no help.
     /// A control drawn shorter than a finger ([height]) answers taps over 44 pt on a phone, without moving
@@ -230,13 +332,12 @@ struct PillButtonStyle: ButtonStyle {
 
     // a nested view, because a style cannot read the environment itself
     private struct PillBody: View {
-        @EnvironmentObject var model: AppModel
+        @Environment(\.nebulaAccent) private var accent
         @Environment(\.isEnabled) var enabled
         let configuration: ButtonStyle.Configuration
         let filled: Bool
 
         var body: some View {
-            let accent = model.accent
             configuration.label
                 .scaledFont(size: 14, weight: .semibold)
                 // a pill never wraps: at a large text size "Watch" broke into "Watc / h"
@@ -361,13 +462,6 @@ enum Fmt {
         let t = Int(secs.rounded(.down))
         let h = t / 3600, m = (t % 3600) / 60, s = t % 60
         return h > 0 ? String(format: "%d:%02d:%02d", h, m, s) : String(format: "%d:%02d", m, s)
-    }
-
-    /// The facts line under a title ("SERIES · DRAMA · 52 min · 2022– · ★ 7.7"). A narrow page
-    /// wraps it, but only between facts: inside one ("52 min", "★ 7.7") the spaces do not break,
-    /// and the dot stays with the fact before it.
-    static func facts(_ parts: [String]) -> String {
-        parts.map { $0.replacingOccurrences(of: " ", with: "\u{00A0}") }.joined(separator: "\u{00A0}\u{00A0}·  ")
     }
 
     /// "1 h 12 min left", "12 min left".

@@ -35,7 +35,7 @@ final class NowPlaying {
     private var commands: [MPRemoteCommand] {
         let c = MPRemoteCommandCenter.shared()
         return [c.playCommand, c.pauseCommand, c.togglePlayPauseCommand, c.changePlaybackPositionCommand,
-                c.skipForwardCommand, c.skipBackwardCommand]
+                c.skipForwardCommand, c.skipBackwardCommand, c.nextTrackCommand, c.previousTrackCommand]
     }
 
     func start(id: UUID, mpv: MPVController, title: String, subtitle: String?, step: Double, art: String?) {
@@ -61,6 +61,10 @@ final class NowPlaying {
         c.skipBackwardCommand.preferredIntervals = [NSNumber(value: step)]
         on(c.skipForwardCommand) { [weak mpv] _ in NowPlaying.onMain { mpv?.seek(by: step) }; return .success }
         on(c.skipBackwardCommand) { [weak mpv] _ in NowPlaying.onMain { mpv?.seek(by: -step) }; return .success }
+        // the Mac's ⏮ ⏭ keys and a headset's double and triple press send these: a step either
+        // way, like the skip buttons. Unanswered, the system handed them to Music
+        on(c.nextTrackCommand) { [weak mpv] _ in NowPlaying.onMain { mpv?.seek(by: step) }; return .success }
+        on(c.previousTrackCommand) { [weak mpv] _ in NowPlaying.onMain { mpv?.seek(by: -step) }; return .success }
 
         // every change the engine publishes (on the main queue) — delivered a turn later, once
         // the new value is in place: @Published announces a change before it makes it
@@ -134,6 +138,8 @@ final class NowPlaying {
         c.changePlaybackPositionCommand.isEnabled = !live
         c.skipBackwardCommand.isEnabled = steps[0]
         c.skipForwardCommand.isEnabled = steps[1]
+        c.previousTrackCommand.isEnabled = steps[0]
+        c.nextTrackCommand.isEnabled = steps[1]
         last = (now, elapsed, rate, mpv.duration, live, artwork != nil, mpv.ended, steps)
     }
 

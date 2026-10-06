@@ -41,16 +41,22 @@ struct StreamsView: View {
                     }
                     ForEach(order(sections).filter { filter == nil || filter == $0.id }) { s in
                         // rows line their names up behind a plate when any row in the section has one
-                        let plates = s.streams.contains { StreamBadges.plate($0.name + "\n" + $0.title + "\n" + $0.fileName) != nil }
+                        let plates = s.plates
                         VStack(alignment: .leading, spacing: 10) {
                             HStack(alignment: .firstTextBaseline, spacing: 8) {
                                 Text(s.addon.name).scaledFont(size: 16, weight: .semibold).foregroundStyle(Theme.ink)
                                 Text("\(s.streams.count)").scaledFont(size: 12, design: .monospaced).foregroundStyle(Theme.label3)
                             }
-                            VStack(spacing: 6) {
+                            // lazy: an add-on can answer with a hundred rows, and only the ones on
+                            // screen need to exist
+                            LazyVStack(spacing: 6) {
                                 ForEach(Array(s.streams.enumerated()), id: \.offset) { i, st in
                                     let key = s.id + "#\(i)"
-                                    StreamRow(stream: st, addonName: s.addon.name, plateSlot: plates, busy: waiting == key) { play(st, from: s.addon, key: key) }
+                                    StreamRow(stream: st, text: i < s.rows.count ? s.rows[i] : StreamRowText(st, addonName: s.addon.name),
+                                              plateSlot: plates, busy: waiting == key) { play(st, from: s.addon, key: key) }
+                                        // a row is drawn again only when what it shows changed — not for
+                                        // every other section landing or another row's tap
+                                        .equatable()
                                 }
                             }
                         }
@@ -62,9 +68,11 @@ struct StreamsView: View {
                             EmptyState(icon: "wifi.slash", title: "No streams for this", detail: unreachableLine,
                                        actionTitle: "Try again", action: retry)
                         } else {
+                            // the way out is another add-on: one press to the page that adds one
                             EmptyState(icon: "play.slash", title: "No streams for this",
                                        detail: answered == 0 ? "None of your add-ons offers streams for this kind of title. Add one that does in Add-ons."
-                                                             : "\(answered) add-on\(answered == 1 ? "" : "s") answered, and none had a stream for it.")
+                                                             : "\(answered) add-on\(answered == 1 ? "" : "s") answered, and none had a stream for it.",
+                                       actionTitle: "Open Add-ons", action: { model.select(.addons) })
                         }
                     }
                 }
@@ -191,9 +199,12 @@ struct StreamsView: View {
     }
 }
 
-struct StreamRow: View {
+/// One stream. Its words come ready-made (`StreamRowText`, read once as the add-on answered),
+/// and it is equal to its old self — and so not drawn again — while those, its column and its
+/// waiting state are the same. The tap's action is not compared: it plays this same stream.
+struct StreamRow: View, Equatable {
     let stream: StreamItem
-    let addonName: String
+    let text: StreamRowText
     /// Keep the plate's column when this row has none, so the names down a section line up.
     var plateSlot = true
     /// Tapped, and waiting for something before it can play.
@@ -201,15 +212,14 @@ struct StreamRow: View {
     let action: () -> Void
     @State private var hover = false
 
+    static func == (a: StreamRow, b: StreamRow) -> Bool {
+        a.stream == b.stream && a.text == b.text && a.plateSlot == b.plateSlot && a.busy == b.busy
+    }
+
     var body: some View {
-        let raw = stream.name + "\n" + stream.title + "\n" + stream.fileName
-        let plate = StreamBadges.plate(raw)
-        let match = StreamBadges.match(raw)
-        // the rules that drew a badge also take their words out of the description, so a row
-        // does not say "HDR · Atmos" beside the HDR and Atmos badges
-        let facts = StreamBadges.facts(videoSize: stream.videoSize, text: stream.title, fired: match.fired)
-        let name = StreamBadges.cleanName(stream.name, addonName: addonName)
-        let desc = StreamBadges.cleanDesc(facts.desc)
+        let plate = text.plate
+        let name = text.name
+        let desc = text.desc
         Button(action: action) {
             HStack(spacing: 16) {
                 // the plate says what the resolution is; with none known there is no plate — a
@@ -228,11 +238,11 @@ struct StreamRow: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(name.isEmpty ? (desc.isEmpty ? "Stream" : desc) : name).scaledFont(size: 14, weight: .semibold).foregroundStyle(Theme.ink).lineLimit(1)
                     if !name.isEmpty && !desc.isEmpty { Text(desc).scaledFont(size: 12).foregroundStyle(Theme.label2).lineLimit(2) }
-                    if !facts.line.isEmpty { Text(facts.line).scaledFont(size: 11, design: .monospaced).foregroundStyle(Theme.label3).lineLimit(1) }
+                    if !text.facts.isEmpty { Text(text.facts).scaledFont(size: 11, design: .monospaced).foregroundStyle(Theme.label3).lineLimit(1) }
                 }
                 Spacer(minLength: 12)
                 HStack(spacing: 8) {
-                    ForEach(match.badges, id: \.self) { BadgeImage(file: $0) }
+                    ForEach(text.badges, id: \.self) { BadgeImage(file: $0) }
                 }
                 if busy { ProgressView().controlSize(.small).frame(width: 14) }
                 else { Image(systemName: "play.fill").scaledFont(size: 12).foregroundStyle(hover ? Theme.ink : Theme.label3) }

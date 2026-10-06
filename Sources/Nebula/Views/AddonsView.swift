@@ -14,7 +14,7 @@ struct AddonsView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Add-ons").scaledFont(size: 30, weight: .bold).foregroundStyle(Theme.ink)
                     Text("Add-ons bring the catalogs, the details, the streams and the subtitles. Nebula asks them in the order below.")
-                        .scaledFont(size: 13).foregroundStyle(Theme.label2).fixedSize(horizontal: false, vertical: true).frame(maxWidth: Theme.cap(560), alignment: .leading)
+                        .scaledFont(size: 13).foregroundStyle(Theme.label2).fixedSize(horizontal: false, vertical: true).readingCap(560, alignment: .leading)
                 }
                 .padding(.top, 56)
 
@@ -32,7 +32,7 @@ struct AddonsView: View {
                     }
                     if let e = error { Text(e).scaledFont(size: 12.5).foregroundStyle(Theme.danger) }
                 }
-                .frame(maxWidth: Theme.cap(720))
+                .readingCap(720)
 
                 Panel {
                     ForEach(Array(model.addons.enumerated()), id: \.element.manifestUrl) { i, a in
@@ -40,7 +40,7 @@ struct AddonsView: View {
                         row(a, i)
                     }
                 }
-                .frame(maxWidth: Theme.cap(720))
+                .readingCap(720)
             }
             // the column starts at the page's margin like every other page's, not centred in a wide window
             .frame(maxWidth: .infinity, alignment: .leading)

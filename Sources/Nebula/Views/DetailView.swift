@@ -46,7 +46,7 @@ struct DetailView: View {
                     if let d = meta?.description ?? item.description {
                         VStack(alignment: .leading, spacing: 6) {
                             Text(d).scaledFont(size: 14.5).foregroundStyle(Theme.ink.opacity(0.86)).lineSpacing(3)
-                                .lineLimit(expanded ? nil : 4).fixedSize(horizontal: false, vertical: true).frame(maxWidth: Theme.cap(720), alignment: .leading)
+                                .lineLimit(expanded ? nil : 4).fixedSize(horizontal: false, vertical: true).readingCap(720, alignment: .leading)
                             if d.count > 320 {
                                 Button(expanded ? "Less" : "More") { expanded.toggle() }.buttonStyle(.plain)
                                     .scaledFont(size: 13, weight: .semibold).foregroundStyle(Theme.label2)
@@ -87,7 +87,7 @@ struct DetailView: View {
                     Text(full.name).font(.system(size: 38, weight: .bold)).foregroundStyle(.white).lineLimit(2).frame(maxHeight: .infinity, alignment: .bottomLeading)
                 }
                 .frame(maxWidth: 380, maxHeight: 120, alignment: .bottomLeading)
-                Text(facts).scaledFont(size: 12, weight: .medium, design: .monospaced).foregroundStyle(.white.opacity(0.75))
+                FactsLine(parts: facts).scaledFont(size: 12, weight: .medium, design: .monospaced).foregroundStyle(.white.opacity(0.75))
                 actions
             }
             .padding(.horizontal, Theme.pad)
@@ -95,13 +95,13 @@ struct DetailView: View {
         .frame(height: Theme.detailHeight + bleed)
     }
 
-    private var facts: String {
+    private var facts: [String] {
         var p: [String] = [isSeries ? "SERIES" : typeLabel(item.type) == "Films" ? "FILM" : typeLabel(item.type).uppercased()]
         p.append(contentsOf: (meta?.genres ?? item.genres).prefix(3).map { $0.uppercased() })
         if let r = meta?.runtime ?? item.runtime { p.append(r) }
         if let y = meta?.releaseInfo ?? item.releaseInfo { p.append(y) }
         if let r = meta?.imdbRating ?? item.imdbRating { p.append("★ " + r) }
-        return Fmt.facts(p)
+        return p
     }
 
     private var actions: some View {
@@ -198,12 +198,13 @@ struct DetailView: View {
                     ForEach(seasons, id: \.self) { s in Chip(text: s == 0 ? "Specials" : "Season \(s)", on: s == cur) { season = s } }
                 }
             }
+            // the rows read their ticks from the store as they draw; a fresh identity for every
+            // progress change rebuilt the whole list for one tick
             LazyVStack(spacing: 2) {
                 ForEach(list) { ep in
                     EpisodeRow(ep: ep, type: item.type, upNext: ep.id == upNextId) { openEpisode(ep, m) }
                 }
             }
-            .id(model.progressVersion)
         }
     }
 }
@@ -263,11 +264,29 @@ struct EpisodeRow: View {
         }
     }
 
+    /// The day an episode aired, as the add-on dates it ("2024-03-07T00:00:00.000Z"): a calendar
+    /// day, read and shown in UTC. Shown in the viewer's own zone, that midnight fell on the day
+    /// before anywhere west of UTC — every episode dated a day early in the Americas.
     private var airDate: String? {
-        guard let r = ep.released, r.count >= 10 else { return nil }
-        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; f.timeZone = TimeZone(identifier: "UTC")
-        guard let d = f.date(from: String(r.prefix(10))) else { return nil }
-        let out = DateFormatter(); out.dateFormat = "d MMM yyyy"
-        return out.string(from: d)
+        guard let r = ep.released, r.count >= 10, let d = EpisodeRow.reader.date(from: String(r.prefix(10))) else { return nil }
+        return EpisodeRow.shown.string(from: d)
     }
+
+    /// Made once (a formatter is costly, and each row made two every time it was drawn). The
+    /// reader is fixed to POSIX, so a phone set to another calendar still reads the year right.
+    private static let reader: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = TimeZone(identifier: "UTC")
+        f.dateFormat = "yyyy-MM-dd"
+        return f
+    }()
+
+    /// In the viewer's own words and order ("7 Mar 2024", "Mar 7, 2024"), on the UTC day.
+    private static let shown: DateFormatter = {
+        let f = DateFormatter()
+        f.timeZone = TimeZone(identifier: "UTC")
+        f.setLocalizedDateFormatFromTemplate("d MMM yyyy")
+        return f
+    }()
 }

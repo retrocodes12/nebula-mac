@@ -31,7 +31,7 @@ struct SearchView: View {
                 .padding(.horizontal, 16).padding(.vertical, 10).frame(minHeight: 46)
                 .background(RoundedRectangle(cornerRadius: 12).fill(Theme.surface))
                 .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(focused ? Color.white.opacity(0.5) : Theme.line))
-                .frame(maxWidth: Theme.cap(640))
+                .readingCap(640)
                 .padding(.horizontal, Theme.pad).padding(.top, 56)
 
                 if submitted.isEmpty {
@@ -65,6 +65,14 @@ struct SearchView: View {
             }
         }
         .background(Theme.bg)
+        // ⌘F on a Mac: the page is being brought up as this runs, and a field takes the cursor
+        // only once it is shown and switched on — so a moment later
+        .onChange(of: model.searchFocus) { _ in
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 80_000_000)
+                focused = true
+            }
+        }
     }
 
     private func run(_ raw: String) {

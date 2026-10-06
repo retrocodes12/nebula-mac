@@ -28,6 +28,8 @@ struct HomeView: View {
                 if !cw.isEmpty {
                     VStack(alignment: .leading, spacing: 14) {
                         RowHeader(title: "Continue Watching")
+                        // no fresh identity per progress change any more: that rebuilt the row and
+                        // threw away its scroll place; the cards redraw from their records
                         ScrollView(.horizontal, showsIndicators: false) {
                             LazyHStack(alignment: .top, spacing: 16) {
                                 ForEach(cw, id: \.id) { ContinueCard(rec: $0) }
@@ -35,7 +37,6 @@ struct HomeView: View {
                             .padding(.horizontal, Theme.pad).padding(.vertical, 6)
                         }
                     }
-                    .id(model.progressVersion)
                 }
 
                 ForEach(model.homeRows) { CatalogRowView(row: $0) }
@@ -89,9 +90,17 @@ struct SkeletonRows: View {
 struct Hero: View {
     @EnvironmentObject var model: AppModel
     @Environment(\.topBleed) private var bleed
+    @Environment(\.scenePhase) private var phase
     let items: [(MetaItem, Addon)]
     @State private var index = 0
     @State private var hovering = false
+
+    /// Home is what the viewer is looking at: its tab, nothing pushed over it, no film over it,
+    /// the app in front. The art used to move on under every other page — and under the player,
+    /// and with the app in the background — loading a backdrop each time for nobody.
+    private var onScreen: Bool {
+        model.tab == .home && model.path.isEmpty && model.player == nil && phase == .active
+    }
 
     var body: some View {
         let item = items[min(index, items.count - 1)].0
@@ -110,9 +119,9 @@ struct Hero: View {
                     Text(item.name).font(.system(size: 40, weight: .bold)).foregroundStyle(.white).lineLimit(2).frame(maxHeight: .infinity, alignment: .bottomLeading)
                 }
                 .frame(maxWidth: 360, maxHeight: 110, alignment: .bottomLeading)
-                Text(facts(item)).scaledFont(size: 12, weight: .medium, design: .monospaced).foregroundStyle(.white.opacity(0.75))
+                FactsLine(parts: facts(item)).scaledFont(size: 12, weight: .medium, design: .monospaced).foregroundStyle(.white.opacity(0.75))
                 if let d = item.description {
-                    Text(d).scaledFont(size: 14).foregroundStyle(.white.opacity(0.82)).lineLimit(3).fixedSize(horizontal: false, vertical: true).frame(maxWidth: Theme.cap(520), alignment: .leading)
+                    Text(d).scaledFont(size: 14).foregroundStyle(.white.opacity(0.82)).lineLimit(3).fixedSize(horizontal: false, vertical: true).readingCap(520, alignment: .leading)
                 }
                 // one row when it fits; at a large text size on a phone the dots go under the
                 // buttons rather than push the row past the page's margin
@@ -126,11 +135,14 @@ struct Hero: View {
         }
         .frame(height: Theme.heroHeight + bleed)
         .onHover { hovering = $0 }
-        .task(id: items.count) {
-            // moves on by itself, and holds still while the pointer is over it
+        // moves on by itself while Home is on screen, and holds still while the pointer is over
+        // it; keyed on both, so leaving Home stops the clock and coming back starts it again
+        .task(id: onScreen ? items.count : 0) {
+            guard onScreen, items.count > 1 else { return }
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 9_000_000_000)
-                if !hovering && items.count > 1 && model.player == nil { withAnimation(.easeInOut(duration: 0.6)) { index = (index + 1) % items.count } }
+                if Task.isCancelled { return }
+                if !hovering && items.count > 1 { withAnimation(.easeInOut(duration: 0.6)) { index = (index + 1) % items.count } }
             }
         }
     }
@@ -163,12 +175,12 @@ struct Hero: View {
     static let dotGap: CGFloat = 6
     #endif
 
-    private func facts(_ m: MetaItem) -> String {
+    private func facts(_ m: MetaItem) -> [String] {
         var p = [typeLabel(m.type) == "Films" ? "FILM" : typeLabel(m.type).uppercased()]
         if let g = m.genres.first { p.append(g.uppercased()) }
         if let y = m.releaseInfo { p.append(y) }
         if let r = m.imdbRating { p.append("★ " + r) }
-        return Fmt.facts(p)
+        return p
     }
 }
 

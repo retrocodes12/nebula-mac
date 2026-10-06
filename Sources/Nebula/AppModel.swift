@@ -45,7 +45,11 @@ struct CatalogRow: Identifiable, Equatable {
 struct StreamSection: Identifiable, Equatable {
     var addon: Addon
     var streams: [StreamItem]
+    /// What each row says, read off the main thread as the add-on answered (one per stream).
+    var rows: [StreamRowText]
     var id: String { addon.manifestUrl }
+    /// Rows line their names up behind a plate when any row in the section has one.
+    var plates: Bool { rows.contains { $0.plate != nil } }
 }
 
 /// Everything the player needs to play one thing and to know what comes after it.
@@ -91,7 +95,10 @@ final class AppModel: ObservableObject {
 
     @Published var tab: Tab = .home
     @Published var path: [Route] = []
-    @Published var player: PlayRequest?
+    @Published var player: PlayRequest? {
+        // the pages under a closed player catch up on what it wrote while it was up
+        didSet { if player == nil && progressPending { progressPending = false; progressVersion += 1 } }
+    }
     @Published var toast: Toast?
     @Published var addons: [Addon] = []
     @Published var profile: Profile?
@@ -100,6 +107,12 @@ final class AppModel: ObservableObject {
     /// labels or the saved mark re-read them.
     @Published var progressVersion = 0
     @Published var libraryVersion = 0
+    /// A change to the progress store while a player is up. The player writes its place every
+    /// five seconds, and each bump redrew every page alive under it (all five tabs and every
+    /// pushed page) for nobody to see; the pages catch up once, when it closes.
+    private var progressPending = false
+    /// Bumped to ask the Search page to put the cursor in its field (⌘F on a Mac).
+    @Published var searchFocus = 0
 
     /// A newer release than this build, when there is one ("v0.2.0").
     @Published var updateTag: String?
@@ -155,7 +168,7 @@ final class AppModel: ObservableObject {
         progress.disabledAddons = { Set(addonsRef.all().filter { !$0.enabled }.map(\.manifestUrl)) }
         progress.onChange = { [weak self] in
             Task { await cloud.noteChanged("progress") }
-            Task { @MainActor in self?.progressVersion += 1 }
+            Task { @MainActor in self?.progressChanged() }
         }
         library.onChange = { [weak self] in
             Task { await cloud.noteChanged("library") }
@@ -188,12 +201,31 @@ final class AppModel: ObservableObject {
         Task { await checkForUpdate() }
     }
 
-    /// One question to the releases page per launch. The app never downloads anything itself:
-    /// it says a newer one exists and opens the page.
+    /// One question per launch. The app never downloads anything itself: it says a newer one
+    /// exists and opens the page. Nebula's own releases feed is asked first — GitHub allows a
+    /// household sixty questions an hour, and one busy evening of apps used them up — and
+    /// GitHub only when the feed has no answer.
     func checkForUpdate() async {
-        guard let j = try? await stremio.getJSON("https://api.github.com/repos/retrocodes12/nebula-mac/releases/latest"),
-              let tag = j.text("tag_name") else { return }
-        if AppModel.isNewer(tag, than: AppInfo.version) { updateTag = tag }
+        var tag: String?
+        if let feed = try? await stremio.getJSON(AppInfo.releasesApi), let apple = feed.obj("apple") {
+            tag = apple.text("tag") ?? apple.text("version").map { $0.hasPrefix("v") ? $0 : "v" + $0 }
+        }
+        if tag == nil, let j = try? await stremio.getJSON("https://api.github.com/repos/retrocodes12/nebula-mac/releases/latest") {
+            tag = j.text("tag_name")
+        }
+        if let t = tag, AppModel.isNewer(t, than: AppInfo.version) { updateTag = t }
+    }
+
+    /// The progress store changed (here or through sync): the pages re-read it — now, or, while a
+    /// player is up, once it closes.
+    func progressChanged() {
+        if player != nil { progressPending = true } else { progressVersion += 1 }
+    }
+
+    /// The Search page, with the cursor in its field.
+    func focusSearch() {
+        select(.search)
+        searchFocus &+= 1
     }
 
     static func isNewer(_ tag: String, than current: String) -> Bool {
@@ -343,7 +375,7 @@ final class AppModel: ObservableObject {
 
     private func syncApplied(_ keys: Set<String>) {
         if keys.contains("addons") { addons = addonStore.all(); manifestCache.removeAll(); manifestMisses.removeAll(); invalidateHome() }
-        if keys.contains("progress") { progressVersion += 1 }
+        if keys.contains("progress") { progressChanged() }
         if keys.contains("library") { libraryVersion += 1 }
     }
 
@@ -472,18 +504,21 @@ final class AppModel: ObservableObject {
     func loadStreams(_ t: StreamsTarget, onSection: @escaping (StreamSection) -> Void) async -> (answered: Int, unreachable: Int) {
         let stremio = stremio
         var answered = 0, unreachable = 0
-        await withTaskGroup(of: (Addon, Bool, [StreamItem]?).self) { group in
+        await withTaskGroup(of: (Addon, Bool, [StreamItem]?, [StreamRowText]).self) { group in
             for a in activeAddons {
                 group.addTask {
-                    guard let m = await self.manifest(for: a) else { return (a, false, nil) }
-                    guard m.stream.has, a.manifestUrl == t.addonUrl || m.canStream(t.type, t.id) else { return (a, false, []) }
-                    return (a, true, try? await stremio.loadStreams(base: a.base, type: t.type, id: t.id))
+                    guard let m = await self.manifest(for: a) else { return (a, false, nil, []) }
+                    guard m.stream.has, a.manifestUrl == t.addonUrl || m.canStream(t.type, t.id) else { return (a, false, [], []) }
+                    guard let s = try? await stremio.loadStreams(base: a.base, type: t.type, id: t.id) else { return (a, true, nil, []) }
+                    // each row's words are read here, on this task's own thread, once — not by
+                    // the main thread every time the row is drawn
+                    return (a, true, s, s.map { StreamRowText($0, addonName: a.name) })
                 }
             }
-            for await (a, asked, streams) in group {
+            for await (a, asked, streams, rows) in group {
                 guard let s = streams else { unreachable += 1; continue }
                 if asked { answered += 1 }
-                if !s.isEmpty { onSection(StreamSection(addon: a, streams: s)) }
+                if !s.isEmpty { onSection(StreamSection(addon: a, streams: s, rows: rows)) }
             }
         }
         return (answered, unreachable)

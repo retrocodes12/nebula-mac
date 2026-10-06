@@ -98,7 +98,9 @@ struct LibraryView: View {
                 }
                 .padding(.top, 56)
                 if types.count > 1 {
-                    HStack(spacing: 8) {
+                    // sideways, like Discover's pills: Films, Series, Live TV, Channels and a few
+                    // add-on types of their own do not fit across a phone
+                    EdgeScroller {
                         Chip(text: "All", on: type == nil) { type = nil }
                         ForEach(types, id: \.self) { t in Chip(text: typeLabel(t), on: type == t) { type = t } }
                     }
@@ -116,7 +118,8 @@ struct LibraryView: View {
             .padding(.horizontal, Theme.pad).padding(.bottom, 50)
         }
         .background(Theme.bg)
-        .id(model.libraryVersion)
+        // no fresh identity per change to the list: that reset the scroll place and the chosen
+        // type every time a title was saved anywhere; the page reads the list as it draws
         .onChange(of: types) { available in
             if let t = type, !available.contains(t) { type = nil }
         }
