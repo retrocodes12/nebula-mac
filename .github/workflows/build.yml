@@ -59,6 +59,8 @@ jobs:
           python3 scripts/wrapped-hls.py 8899 > /tmp/wrapped.log 2>&1 &
           for i in $(seq 1 60); do grep -q serving /tmp/wrapped.log && break; sleep 1; done
           cat /tmp/wrapped.log
+          NEBULA_MPV_DEBUG=1 dist/Nebula.app/Contents/MacOS/Nebula --smoke "http://127.0.0.1:8899/t/abc/index.m3u8" --header "Referer: https://iplayer.is/" --seconds 3 2>&1 | tail -60 || true
+          cat /tmp/wrapped.log
           dist/Nebula.app/Contents/MacOS/Nebula --smoke "http://127.0.0.1:8899/t/abc/index.m3u8" --header "Referer: https://iplayer.is/" --seconds 3
       - name: Smoke — a live protected stream from the sports add-on, keys from its licence
         continue-on-error: true

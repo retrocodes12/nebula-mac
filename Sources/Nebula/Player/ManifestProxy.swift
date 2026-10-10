@@ -29,6 +29,7 @@ final class ManifestProxy: @unchecked Sendable {
     private var lastPort: UInt16 = 0
     private var entries: [String: Entry] = [:]
     private let maxAge: TimeInterval = 2.5
+    static let trace = ProcessInfo.processInfo.environment["NEBULA_MPV_DEBUG"] == "1"
     private let transport = URLSessionTransport(timeout: 20)
     /// Pieces are seconds of video, megabytes each: their own session, so a slow one does not
     /// count against the manifests' short answers.
@@ -201,6 +202,9 @@ final class ManifestProxy: @unchecked Sendable {
             case .raw(let u):
                 if let (d, status, _) = await self.get(u, e.headers) { code = status; if (200...299).contains(status) { body = d } }
             }
+            if ManifestProxy.trace {
+                FileHandle.standardError.write(Data("proxy: \(ask) -> \(code) \(body.count) B \(type)\n".utf8))
+            }
             self.queue.async {
                 // a player on its way out: nothing more is handed over for it
                 guard self.entries[token] != nil else { self.reply(c, 404, Data()); return }
@@ -216,10 +220,14 @@ final class ManifestProxy: @unchecked Sendable {
         r.setValue(MPVController.userAgent, forHTTPHeaderField: "User-Agent")
         for (k, v) in headers { r.setValue(v, forHTTPHeaderField: k) }
         let handle = PieceTask()
+        let trace = ManifestProxy.trace
         return await withTaskCancellationHandler {
             await withCheckedContinuation { (cont: CheckedContinuation<(Data, Int, URL)?, Never>) in
                 let t = pieces.dataTask(with: r) { data, resp, err in
-                    guard err == nil, let h = resp as? HTTPURLResponse else { cont.resume(returning: nil); return }
+                    guard err == nil, let h = resp as? HTTPURLResponse else {
+                        if trace { FileHandle.standardError.write(Data("proxy: get failed \(String(describing: err))\n".utf8)) }
+                        cont.resume(returning: nil); return
+                    }
                     cont.resume(returning: (data ?? Data(), h.statusCode, h.url ?? url))
                 }
                 handle.set(t)
