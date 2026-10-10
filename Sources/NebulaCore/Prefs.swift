@@ -1,6 +1,7 @@
 import Foundation
 
-/// Device-local preferences. Nothing here syncs.
+/// Device-local preferences. Nothing here syncs — except the two documents at the end, which
+/// ride on the profile (the caller tells the cloud they changed).
 public final class Prefs: @unchecked Sendable {
     let store: Store
     /// The document, parsed once. Every read used to parse the whole file again, and the player
@@ -22,6 +23,9 @@ public final class Prefs: @unchecked Sendable {
         cache = o
         store.setObject("prefs", o)
     }
+
+    /// Gold, Ice and Mint — for supporters (the shared player's SUP_ACCENTS).
+    public static let supporterAccents: [(name: String, hex: String)] = [("Gold", "#E0B24A"), ("Ice", "#64D2FF"), ("Mint", "#66D4CF")]
 
     public static let accents: [(name: String, hex: String)] = [
         ("Nebula Red", "#E50914"), ("White", "#F2F2F7"), ("Cobalt", "#0A84FF"), ("Emerald", "#30D158"),
@@ -79,4 +83,26 @@ public final class Prefs: @unchecked Sendable {
         get { (get("discover") as? JSONObject) ?? [:] }
         set { put("discover", newValue) }
     }
+    /// Skip intros and recaps: "button" (offer it), "auto" (skip by itself) or "off".
+    public var skipIntro: String {
+        get { let v = (get("skip") as? String) ?? "button"; return SkipSegments.modes.contains(v) ? v : "button" }
+        set { put("skip", newValue) }
+    }
+
+    // MARK: synced documents (stored beside the prefs, merged by Cloud)
+
+    /// The subtitle look, every key present. `subStyleChosen` false = never chosen anywhere: the
+    /// engine keeps its own look.
+    public var subStyle: [String: String] { SubStyle.normalize(store.object("sub_style").obj("style")) }
+    public var subStyleChosen: Bool { store.object("sub_style").int64("at") > 0 }
+    public func setSubStyle(_ s: [String: String]?) {
+        store.setObject("sub_style", ["style": SubStyle.normalize(s ?? SubStyle.defaults), "at": nowMs()])
+    }
+
+    /// The viewer's own seekr.tv key ("" = none).
+    public var seekrKey: String {
+        let k = store.object("seekr_v1").str("key")
+        return Seekr.validKey(k) ? k : ""
+    }
+    public func setSeekrKey(_ k: String) { store.setObject("seekr_v1", ["key": k, "at": nowMs()]) }
 }

@@ -10,6 +10,10 @@ struct StreamsView: View {
     @State private var answered = 0
     @State private var unreachable = 0
     @State private var filter: String?
+    /// Add-ons asked for streams that have not answered yet, in the order they were asked.
+    @State private var asking: [Addon] = []
+    /// Twelve seconds have gone with someone still asking: say that some take up to a minute.
+    @State private var slow = false
     @State private var fresh = false
     /// How far the art runs up under a phone's status bar (0 on a Mac).
     @Environment(\.topBleed) private var bleed
@@ -33,6 +37,8 @@ struct StreamsView: View {
                 VStack(alignment: .leading, spacing: 26) {
                     // some add-ons answered and some did not: the list is not the whole story
                     if !loading && !sections.isEmpty && unreachable > 0 { partialNote }
+                    // rows are on screen and someone is still asking: one line names them
+                    if !sections.isEmpty && !asking.isEmpty { waitLine }
                     if sections.count > 1 {
                         EdgeScroller {
                             Chip(text: "All · \(total)", on: filter == nil) { filter = nil }
@@ -61,8 +67,13 @@ struct StreamsView: View {
                             }
                         }
                     }
-                    if loading {
+                    if loading && sections.isEmpty && !asking.isEmpty {
+                        // nothing yet: a box per add-on still looking, by name
+                        VStack(alignment: .leading, spacing: 8) { ForEach(asking) { waitBox($0) } }
+                    } else if loading && sections.isEmpty {
                         HStack(spacing: 10) { ProgressView().controlSize(.small); Text("Asking your add-ons…").scaledFont(size: 13).foregroundStyle(Theme.label2) }
+                    } else if loading {
+                        EmptyView()
                     } else if sections.isEmpty {
                         if unreachable > 0 {
                             EmptyState(icon: "wifi.slash", title: "No streams for this", detail: unreachableLine,
@@ -121,11 +132,44 @@ struct StreamsView: View {
     /// section that answers again replaces its old self.
     private func load() async {
         loading = true
-        let r = await model.loadStreams(target) { s in
+        asking = []; slow = false
+        let slowTimer = Task {
+            try? await Task.sleep(nanoseconds: 12_000_000_000)
+            if !Task.isCancelled { slow = true }
+        }
+        let r = await model.loadStreams(target, onAsking: { a in
+            if !asking.contains(a) { asking.append(a) }
+        }, onDone: { a in
+            asking.removeAll { $0 == a }
+        }) { s in
             if let i = sections.firstIndex(where: { $0.id == s.id }) { sections[i] = s } else { sections.append(s) }
         }
+        slowTimer.cancel()
         answered = r.answered; unreachable = r.unreachable
+        asking = []
         loading = false
+    }
+
+    private func waitBox(_ a: Addon) -> some View {
+        HStack(spacing: 12) {
+            ProgressView().controlSize(.small)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(a.name).scaledFont(size: 14, weight: .semibold).foregroundStyle(Theme.ink)
+                Text(slow ? "Still looking — some add-ons take up to a minute" : "Looking for streams…").scaledFont(size: 12).foregroundStyle(Theme.label2)
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 14).padding(.vertical, 12)
+        .background(RoundedRectangle(cornerRadius: 12).fill(Theme.surface))
+        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.line))
+    }
+
+    private var waitLine: some View {
+        HStack(spacing: 8) {
+            ProgressView().controlSize(.mini)
+            Text("Still asking " + SupportPanel.join(asking.map(\.name)) + (slow ? " — some add-ons take up to a minute" : "…"))
+                .scaledFont(size: 13).foregroundStyle(Theme.label2).lineLimit(2)
+        }
     }
 
     private func retry() {

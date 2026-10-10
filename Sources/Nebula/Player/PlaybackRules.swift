@@ -21,6 +21,13 @@ enum PlaybackRules {
         var keys = stream.clearKeys
         var address = stream.url
         var token: String?
+        // an HLS row that names its own request headers: through loopback, which sends them on
+        // every playlist and piece and unwraps pieces a host hides inside a picture (HlsUnwrap)
+        if !Task.isCancelled, !ClearKey.looksLikeDash(stream.url), !stream.headers.isEmpty, HlsUnwrap.isPlaylist(stream.url),
+           let h = await ManifestProxy.shared.openHls(stream.url, headers: stream.headers) {
+            if Task.isCancelled { ManifestProxy.shared.release(h.token); return (address, keys, nil) }
+            return (h.address, keys, h.token)
+        }
         guard !Task.isCancelled, ClearKey.looksLikeDash(stream.url) else { return (address, keys, nil) }
         var headers = stream.headers
         if !headers.keys.contains(where: { $0.lowercased() == "user-agent" }) { headers["User-Agent"] = MPVController.userAgent }

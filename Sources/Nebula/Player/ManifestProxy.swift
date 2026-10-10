@@ -2,7 +2,8 @@ import Foundation
 import Network
 import NebulaCore
 
-/// A loopback server for DASH manifests, and nothing else. The engine's DASH reader reads the
+/// A loopback server for DASH manifests — and, since 0.4.0, for HLS streams whose host wants its
+/// own request headers on every piece (`openHls`, rules in `HlsUnwrap`). The engine's DASH reader reads the
 /// manifest once per representation before it shows a frame; against a source that takes two
 /// seconds to answer, that was 45 s of black. Here the manifest is fetched once, trimmed to one
 /// picture quality (`DashManifest.prepare`), and every further read is answered from memory —
@@ -16,6 +17,8 @@ final class ManifestProxy: @unchecked Sendable {
         var maxHeight: Int
         var body: Data?
         var fetchedAt = Date.distantPast
+        /// An HLS stream served through `/h/`: its playlists are rewritten, its pieces unwrapped.
+        var hls = false
     }
 
     private let queue = DispatchQueue(label: "nebula.manifest-proxy")
@@ -27,6 +30,31 @@ final class ManifestProxy: @unchecked Sendable {
     private var entries: [String: Entry] = [:]
     private let maxAge: TimeInterval = 2.5
     private let transport = URLSessionTransport(timeout: 20)
+    /// Pieces are seconds of video, megabytes each: their own session, so a slow one does not
+    /// count against the manifests' short answers.
+    private let pieces: URLSession = {
+        let c = URLSessionConfiguration.ephemeral
+        c.timeoutIntervalForRequest = 20
+        c.timeoutIntervalForResource = 120
+        c.requestCachePolicy = .reloadIgnoringLocalCacheData
+        c.httpMaximumConnectionsPerHost = 6
+        return URLSession(configuration: c)
+    }()
+
+    /// An HLS stream through loopback: every playlist is fetched with the stream's headers and its
+    /// addresses renamed to loopback ones, every piece fetched with them and handed over from its
+    /// first video packet (a host that wraps pieces in a picture is played as if it did not).
+    /// nil = play the source directly.
+    func openHls(_ source: String, headers: [String: String]) async -> (address: String, token: String)? {
+        guard HlsUnwrap.isPlaylist(source), !Task.isCancelled, await ensureListening(), !Task.isCancelled else { return nil }
+        let token = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+        let address = queue.sync { () -> String in
+            entries[token] = Entry(source: source, headers: headers, maxHeight: 0, body: nil, hls: true)
+            return "http://127.0.0.1:\(port)/h/\(token)/p/\(HlsUnwrap.encode(source)).m3u8"
+        }
+        if Task.isCancelled { release(token); return nil }
+        return (address, token)
+    }
 
     /// Fetch and prepare a manifest, and return the loopback address to play plus the ORIGINAL
     /// text (the licence address is read from it). nil = play the source directly.
@@ -129,9 +157,11 @@ final class ManifestProxy: @unchecked Sendable {
             guard let self = self, let data = data, let head = String(data: data, encoding: .utf8),
                   let line = head.components(separatedBy: "\r\n").first else { c.cancel(); return }
             let parts = line.split(separator: " ")
-            guard parts.count >= 2, parts[0] == "GET" || parts[0] == "HEAD", parts[1].hasPrefix("/m/") else { self.reply(c, 404, Data()); return }
+            guard parts.count >= 2, parts[0] == "GET" || parts[0] == "HEAD" else { self.reply(c, 404, Data()); return }
+            if parts[1].hasPrefix("/h/") { self.serveHls(c, String(parts[1].dropFirst(3))); return }
+            guard parts[1].hasPrefix("/m/") else { self.reply(c, 404, Data()); return }
             let token = String(parts[1].dropFirst(3).prefix { $0 != "." && $0 != "?" })
-            guard let e = self.entries[token] else { self.reply(c, 404, Data()); return }
+            guard let e = self.entries[token], !e.hls else { self.reply(c, 404, Data()); return }
             if Date().timeIntervalSince(e.fetchedAt) < self.maxAge, let body = e.body { self.reply(c, 200, body); return }
             Task {
                 // a live manifest moves on: ask the source again, and fall back to the copy in hand
@@ -146,8 +176,69 @@ final class ManifestProxy: @unchecked Sendable {
         }
     }
 
-    private func reply(_ c: NWConnection, _ code: Int, _ body: Data) {
-        let head = "HTTP/1.1 \(code) \(code == 200 ? "OK" : "Error")\r\nContent-Type: application/dash+xml\r\nContent-Length: \(body.count)\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n"
+    /// `<token>/p/<enc>.m3u8` · `<token>/s/<enc>.ts` · `<token>/r/<enc>.bin`. Runs on `queue`.
+    private func serveHls(_ c: NWConnection, _ path: String) {
+        guard let slash = path.firstIndex(of: "/") else { reply(c, 404, Data()); return }
+        let token = String(path[..<slash])
+        guard let e = entries[token], e.hls, let ask = HlsUnwrap.ask(String(path[path.index(after: slash)...])) else { reply(c, 404, Data()); return }
+        let prefix = "http://127.0.0.1:\(port)/h/\(token)/"
+        Task {
+            var code = 502, body = Data(), type = "application/octet-stream"
+            switch ask {
+            case .playlist(let u):
+                if let (d, status, final) = await self.get(u, e.headers) {
+                    code = status
+                    if (200...299).contains(status), let text = String(data: d, encoding: .utf8), text.hasPrefix("#EXTM3U") || text.contains("#EXTINF") || text.contains("#EXT-X-") {
+                        body = Data(HlsUnwrap.rewrite(text, base: final.absoluteString, prefix: prefix).utf8)
+                        type = "application/vnd.apple.mpegurl"
+                    } else if (200...299).contains(status) { code = 502 }
+                }
+            case .piece(let u):
+                if let (d, status, _) = await self.get(u, e.headers) {
+                    code = status
+                    if (200...299).contains(status) { body = HlsUnwrap.unwrap(d); type = HlsUnwrap.tsStart(body) == 0 ? "video/mp2t" : type }
+                }
+            case .raw(let u):
+                if let (d, status, _) = await self.get(u, e.headers) { code = status; if (200...299).contains(status) { body = d } }
+            }
+            self.queue.async {
+                // a player on its way out: nothing more is handed over for it
+                guard self.entries[token] != nil else { self.reply(c, 404, Data()); return }
+                self.reply(c, (200...299).contains(code) ? 200 : code, body, type: type)
+            }
+        }
+    }
+
+    /// One request with the stream's headers (and the engine's name unless the stream sets one).
+    private func get(_ address: String, _ headers: [String: String]) async -> (Data, Int, URL)? {
+        guard let url = URL(string: address) else { return nil }
+        var r = URLRequest(url: url)
+        r.setValue(MPVController.userAgent, forHTTPHeaderField: "User-Agent")
+        for (k, v) in headers { r.setValue(v, forHTTPHeaderField: k) }
+        let handle = PieceTask()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { (cont: CheckedContinuation<(Data, Int, URL)?, Never>) in
+                let t = pieces.dataTask(with: r) { data, resp, err in
+                    guard err == nil, let h = resp as? HTTPURLResponse else { cont.resume(returning: nil); return }
+                    cont.resume(returning: (data ?? Data(), h.statusCode, h.url ?? url))
+                }
+                handle.set(t)
+                t.resume()
+            }
+        } onCancel: { handle.cancel() }
+    }
+
+    private func reply(_ c: NWConnection, _ code: Int, _ body: Data, type: String = "application/dash+xml") {
+        let head = "HTTP/1.1 \(code) \(code == 200 ? "OK" : "Error")\r\nContent-Type: \(type)\r\nContent-Length: \(body.count)\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n"
         c.send(content: Data(head.utf8) + body, completion: .contentProcessed { _ in c.cancel() })
     }
+}
+
+/// The piece request in flight, for a cancellation that can arrive before it exists.
+private final class PieceTask: @unchecked Sendable {
+    private let lock = NSLock()
+    private var task: URLSessionTask?
+    private var cancelled = false
+    func set(_ t: URLSessionTask) { lock.lock(); task = t; let c = cancelled; lock.unlock(); if c { t.cancel() } }
+    func cancel() { lock.lock(); cancelled = true; let t = task; lock.unlock(); t?.cancel() }
 }

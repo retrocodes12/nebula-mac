@@ -200,6 +200,16 @@ final class MPVController: ObservableObject {
 
     func setSubDelay(_ secs: Double) { setDouble("sub-delay", secs) }
 
+    /// The viewer's subtitle look (`SubStyle.engineProperties`), applied at once to what is on
+    /// screen. A name an older engine does not know yet is tried under its old one.
+    func applySubStyle(_ props: [(String, String)]) {
+        guard let h = engine else { return }
+        let older = ["sub-outline-size": "sub-border-size", "sub-outline-color": "sub-border-color"]
+        for (k, v) in props where mpv_set_property_string(h, k, v) < 0 {
+            if let o = older[k] { check(mpv_set_property_string(h, o, v)) }
+        }
+    }
+
     /// Picture on or off, the sound untouched. A phone may not draw with the GPU while the app
     /// is in the background, and a video output left drawing there comes back black; taking the
     /// video track away while away and giving it back on return is the MPVKit demo's own cure.

@@ -114,6 +114,13 @@ final class AppModel: ObservableObject {
     /// Bumped to ask the Search page to put the cursor in its field (⌘F on a Mac).
     @Published var searchFocus = 0
 
+    /// Bumped when the subtitle look changes (here, or synced in), so an open player restyles.
+    @Published var subStyleVersion = 0
+    /// Bumped when the Seekr key changes (here, or synced in).
+    @Published var seekrVersion = 0
+    /// Support Nebula: where to send someone, and the wall (the last known answer at launch).
+    @Published var support = SupportInfo.empty
+
     /// A newer release than this build, when there is one ("v0.2.0").
     @Published var updateTag: String?
 
@@ -160,6 +167,7 @@ final class AppModel: ObservableObject {
         addonStore.seedIfNeeded()
         addons = addonStore.all()
         profile = cloud.storedProfile()
+        support = cloud.storedSupport()
 
         let addonsRef = self.addonStore, cloud = self.cloud
         progress.disabledAddons = { Set(addonsRef.all().filter { !$0.enabled }.map(\.manifestUrl)) }
@@ -182,9 +190,10 @@ final class AppModel: ObservableObject {
             await cloud.setHandlers(
                 onApplied: { [weak self] keys in Task { @MainActor in self?.syncApplied(keys) } },
                 onSignedOut: { [weak self] in Task { @MainActor in self?.say("This \(Platform.deviceWord) was signed out of your profile. Nothing on it was deleted.") } },
-                onProfile: { [weak self] p in Task { @MainActor in self?.profile = p } })
+                onProfile: { [weak self] p in Task { @MainActor in self?.profileChanged(p) } })
             await cloud.pullAll(force: true)
             _ = await cloud.refreshProfile()
+            await self.loadSupport()
         }
         // a pull at launch only meant a Mac left open all day never saw the TV's progress; the
         // Mac also pulls on coming to the front and the phone on becoming active (both throttled
@@ -371,9 +380,53 @@ final class AppModel: ObservableObject {
     }
 
     private func syncApplied(_ keys: Set<String>) {
+        if keys.contains("sub_style") { subStyleVersion &+= 1 }
+        if keys.contains("seekr") { seekrVersion &+= 1 }
         if keys.contains("addons") { addons = addonStore.all(); manifestCache.removeAll(); manifestMisses.removeAll(); invalidateHome() }
         if keys.contains("progress") { progressChanged() }
         if keys.contains("library") { libraryVersion += 1 }
+    }
+
+    // MARK: synced looks and keys
+
+    /// The subtitle look, every key; nil = back to the defaults. It follows the profile.
+    func setSubStyle(_ style: [String: String]?) {
+        prefs.setSubStyle(style)
+        subStyleVersion &+= 1
+        Task { await cloud.noteChanged("sub_style") }
+    }
+
+    /// The viewer's own seekr.tv key ("" disconnects). It follows the profile, to their TV too.
+    func setSeekrKey(_ key: String) {
+        prefs.setSeekrKey(key)
+        seekrVersion &+= 1
+        Task { await cloud.noteChanged("seekr") }
+    }
+
+    // MARK: Support Nebula
+
+    /// Show the Support section at all: there is somewhere to send people, or this is a supporter.
+    var supportVisible: Bool { support.url != nil || (profile?.supporter ?? false) }
+
+    func loadSupport() async {
+        if let s = await cloud.loadSupport() { support = s }
+    }
+
+    /// The support page, with this profile's link token when signed in.
+    func openSupport() {
+        guard let u = support.url else { return }
+        Task {
+            let link = await cloud.supportLink(u)
+            if let url = URL(string: link) { Platform.open(url) }
+        }
+    }
+
+    /// A supporter's accent stays theirs only while they are one.
+    private func profileChanged(_ p: Profile?) {
+        profile = p
+        if (p?.rank ?? 0) < 1, Prefs.supporterAccents.contains(where: { $0.hex == accentHex }) {
+            accentHex = Prefs.accents[0].hex
+        }
     }
 
     // MARK: Home
@@ -498,7 +551,8 @@ final class AppModel: ObservableObject {
     /// Each add-on on its own track — its manifest, then its streams — so a section shows the
     /// moment its add-on answers and a dead one holds nobody up. Returns how many were asked and
     /// answered, and how many could not be reached (a manifest or a stream request that failed).
-    func loadStreams(_ t: StreamsTarget, onSection: @escaping (StreamSection) -> Void) async -> (answered: Int, unreachable: Int) {
+    func loadStreams(_ t: StreamsTarget, onAsking: (@MainActor (Addon) -> Void)? = nil, onDone: (@MainActor (Addon) -> Void)? = nil,
+                     onSection: @escaping (StreamSection) -> Void) async -> (answered: Int, unreachable: Int) {
         let stremio = stremio
         var answered = 0, unreachable = 0
         await withTaskGroup(of: (Addon, Bool, [StreamItem]?, [StreamRowText]).self) { group in
@@ -506,6 +560,8 @@ final class AppModel: ObservableObject {
                 group.addTask {
                     guard let m = await self.manifest(for: a) else { return (a, false, nil, []) }
                     guard m.stream.has, a.manifestUrl == t.addonUrl || m.canStream(t.type, t.id) else { return (a, false, [], []) }
+                    // the page names who it is still waiting for
+                    if let ask = onAsking { await MainActor.run { ask(a) } }
                     guard let s = try? await stremio.loadStreams(base: a.base, type: t.type, id: t.id) else { return (a, true, nil, []) }
                     // each row's words are read here, on this task's own thread, once — not by
                     // the main thread every time the row is drawn
@@ -513,6 +569,7 @@ final class AppModel: ObservableObject {
                 }
             }
             for await (a, asked, streams, rows) in group {
+                onDone?(a)
                 guard let s = streams else { unreachable += 1; continue }
                 if asked { answered += 1 }
                 if !s.isEmpty { onSection(StreamSection(addon: a, streams: s, rows: rows)) }

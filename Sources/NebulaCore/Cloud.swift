@@ -8,6 +8,73 @@ public struct Profile: Equatable, Sendable {
     public var name: String
     public var avatar: String
     public var supporter: Bool
+    /// supporter · plus · monthly · founder (the server's names); "" when not a supporter.
+    public var tier: String = ""
+    /// The mark by the name — star, heart, bolt or crown (chosen from Supporter Plus up).
+    public var mark: String = "star"
+    public var since: Int64 = 0
+    /// The name is on the supporters' wall.
+    public var wall = false
+    /// The monthly plan's state (trialing, active, past_due, paused) and its private manage link.
+    public var planStatus: String = ""
+    public var planManage: String = ""
+
+    public init(handle: String, name: String, avatar: String, supporter: Bool) {
+        self.handle = handle; self.name = name; self.avatar = avatar; self.supporter = supporter
+    }
+
+    public static let tiers: [(id: String, name: String)] = [("supporter", "Supporter"), ("plus", "Supporter Plus"), ("monthly", "Monthly Supporter"), ("founder", "Founder")]
+    public static let marks = ["star", "heart", "bolt", "crown"]
+
+    /// 0 not a supporter · 1 supporter · 2 plus or monthly · 3 founder.
+    public var rank: Int {
+        guard supporter else { return 0 }
+        switch tier { case "plus", "monthly": return 2; case "founder": return 3; default: return 1 }
+    }
+    public var tierName: String { Profile.tiers.first { $0.id == tier }?.name ?? "Supporter" }
+    /// The mark by THIS name: the chosen one from Supporter Plus up, a star below.
+    public var shownMark: String { rank >= 2 && Profile.marks.contains(mark) ? mark : "star" }
+    public var planText: String {
+        switch planStatus {
+        case "trialing": return "Free week"
+        case "active": return "Active"
+        case "past_due": return "Payment failed — update your card"
+        case "paused": return "Paused"
+        default: return ""
+        }
+    }
+}
+
+/// `GET /v1/support`: where to send someone who wants to chip in (nil until one is set), and
+/// the wall of names — founders first, as the server sends them.
+public struct SupportInfo: Equatable, Sendable {
+    public var url: String?
+    public var wall: [(name: String, tier: String)]
+    public var count: Int
+
+    public static let empty = SupportInfo(url: nil, wall: [], count: 0)
+
+    public static func == (a: SupportInfo, b: SupportInfo) -> Bool {
+        a.url == b.url && a.count == b.count && a.wall.map { $0.name + "|" + $0.tier } == b.wall.map { $0.name + "|" + $0.tier }
+    }
+
+    static func parse(_ o: JSONObject) -> SupportInfo {
+        let raw = (o["url"] as? String ?? "").trimmingCharacters(in: .whitespaces)
+        let url = raw.hasPrefix("https://") || raw.hasPrefix("http://") ? raw : nil
+        var wall: [(String, String)] = []
+        for v in o.arr("wall") {
+            if let n = v as? String, !n.trimmingCharacters(in: .whitespaces).isEmpty { wall.append((n.trimmingCharacters(in: .whitespaces), "supporter")) }
+            else if let r = v as? JSONObject, let n = r.text("name")?.trimmingCharacters(in: .whitespaces), !n.isEmpty {
+                let t = r.str("tier")
+                wall.append((n, Profile.tiers.contains { $0.id == t } ? t : "supporter"))
+            }
+        }
+        return SupportInfo(url: url, wall: wall, count: o.int("count"))
+    }
+
+    var doc: JSONObject {
+        ["url": url ?? "", "wall": wall.map { ["name": $0.name, "tier": $0.tier] as JSONObject }, "count": count]
+    }
 }
 
 public struct DeviceRec: Equatable, Identifiable, Sendable {
@@ -28,7 +95,7 @@ public struct DeviceRec: Equatable, Identifiable, Sendable {
 /// them, so they pass through untouched.
 public actor Cloud {
     public static let defaultBase = "https://play.rifflehq.in/cloud"
-    static let syncKeys = ["addons", "progress", "library"]
+    static let syncKeys = ["addons", "progress", "library", "sub_style", "seekr"]
 
     let base: String
     let store: Store
@@ -76,16 +143,33 @@ public actor Cloud {
 
     public nonisolated func storedProfile() -> Profile? { Cloud.parseProfile(store.object("profile")) }
 
+    /// A profile from `/me` (its `supporter` object), from a sign-in's `profile` (`sup`, `tier`,
+    /// `mark`), or from what this device stored (the same flat fields plus the plan's).
     static func parseProfile(_ o: JSONObject?) -> Profile? {
         guard let o = o, let h = o.text("handle") else { return nil }
-        return Profile(handle: h, name: o.text("name") ?? h, avatar: o.text("avatar") ?? "#636366",
-                       supporter: o.bool("sup") || o.obj("supporter") != nil)
+        let s = o.obj("supporter")
+        var p = Profile(handle: h, name: o.text("name") ?? h, avatar: o.text("avatar") ?? "#636366",
+                        supporter: o.bool("sup") || s != nil)
+        if p.supporter {
+            let t = s?.text("tier") ?? o.text("tier") ?? "supporter"
+            p.tier = Profile.tiers.contains { $0.id == t } ? t : "supporter"
+            let m = s?.text("mark") ?? o.text("mark") ?? "star"
+            p.mark = Profile.marks.contains(m) ? m : "star"
+            p.since = s?.int64("since") ?? o.int64("since")
+            p.wall = s?.bool("wall") ?? o.bool("wall")
+            let plan = s?.obj("subscription")
+            p.planStatus = plan?.text("status") ?? (s == nil ? o.str("planStatus") : "")
+            let manage = plan?.text("manage") ?? (s == nil ? o.str("planManage") : "")
+            p.planManage = manage.hasPrefix("https://") ? manage : ""
+        }
+        return p
     }
 
     private func setProfile(_ o: JSONObject?) {
         let p = Cloud.parseProfile(o)
         if let p = p {
-            store.setObject("profile", ["handle": p.handle, "name": p.name, "avatar": p.avatar, "sup": p.supporter])
+            store.setObject("profile", ["handle": p.handle, "name": p.name, "avatar": p.avatar, "sup": p.supporter, "tier": p.tier,
+                                        "mark": p.mark, "since": p.since, "wall": p.wall, "planStatus": p.planStatus, "planManage": p.planManage])
         } else {
             store.set("profile", nil)
         }
@@ -243,6 +327,8 @@ public actor Cloud {
         case "addons": return !addons.all().isEmpty || !(addons.syncDoc().obj("removed") ?? [:]).isEmpty
         case "progress": return !progress.all().isEmpty
         case "library": return !library.doc().isEmpty
+        case "sub_style": return store.object("sub_style").int64("at") > 0
+        case "seekr": return store.object("seekr_v1").int64("at") > 0
         default: return false
         }
     }
@@ -285,6 +371,8 @@ public actor Cloud {
         case "addons": return mergeAddons(remote)
         case "progress": return mergeProgress(remote)
         case "library": return mergeLibrary(remote)
+        case "sub_style": return mergeSubStyle(remote)
+        case "seekr": return mergeSeekr(remote)
         default: return (false, false)
         }
     }
@@ -311,6 +399,12 @@ public actor Cloud {
             }
         case "progress": return JSON.text(progress.wireDoc())
         case "library": return JSON.text(library.doc())
+        case "sub_style":
+            let l = store.object("sub_style")
+            return JSON.text(["style": SubStyle.normalize(l.obj("style")), "at": l.int64("at")] as JSONObject)
+        case "seekr":
+            let l = store.object("seekr_v1")
+            return JSON.text(["key": l.str("key"), "at": l.int64("at")] as JSONObject)
         default: return nil
         }
     }
@@ -396,6 +490,27 @@ public actor Cloud {
             return changed
         }
         return (changed, localNewer)
+    }
+
+    /// Newest wins, whole document. A malformed one is written over by ours, if we have one.
+    private func mergeSubStyle(_ remote: JSONObject) -> (Bool, Bool) {
+        let lAt = store.object("sub_style").int64("at"), rAt = remote.int64("at")
+        guard let style = remote.obj("style") else { return (false, lAt > 0) }
+        if rAt > lAt {
+            store.setObject("sub_style", ["style": SubStyle.normalize(style), "at": rAt])
+            return (true, false)
+        }
+        return (false, lAt > rAt)
+    }
+
+    private func mergeSeekr(_ remote: JSONObject) -> (Bool, Bool) {
+        let lAt = store.object("seekr_v1").int64("at")
+        guard let r = Seekr.read(remote) else { return (false, lAt > 0) }
+        if r.at > lAt {
+            store.setObject("seekr_v1", ["key": r.key, "at": r.at])
+            return (true, false)
+        }
+        return (false, lAt > r.at)
     }
 
     private func mergeLibrary(_ remote: JSONObject) -> (Bool, Bool) {
@@ -513,5 +628,59 @@ public actor Cloud {
             guard current(session) else { throw CancellationError() }
             return (r.obj("device")?.text("name") ?? "The TV", nil)
         } catch { return (nil, Cloud.errorText(error)) }
+    }
+
+    // MARK: Support Nebula
+
+    /// The last known answer of `GET /v1/support`, so the section does not flicker in.
+    public nonisolated func storedSupport() -> SupportInfo { SupportInfo.parse(store.object("support_v1")) }
+
+    /// One `GET /v1/support` (no sign-in needed); nil when it could not be asked.
+    public func loadSupport() async -> SupportInfo? {
+        guard let r = try? await api("GET", "/v1/support", auth: false) else { return nil }
+        let info = SupportInfo.parse(r)
+        store.setObject("support_v1", info.doc)
+        return info
+    }
+
+    /// The support page's address, with a 15-minute link token when signed in — what is bought
+    /// then lands on this profile without a code. The plain address if the token call fails.
+    public func supportLink(_ url: String) async -> String {
+        guard linked, let t = (try? await api("POST", "/v1/support/link", [:]))?.text("token") else { return url }
+        return url + (url.contains("?") ? "&" : "?") + "for=" + t
+    }
+
+    /// "neb-ab12 cd34" → "AB12CD34"; anything that is not 8 such characters → "".
+    public static func supportCode(_ raw: String) -> String {
+        var s = raw.uppercased().filter { $0.isASCII && ($0.isLetter || $0.isNumber) }
+        if s.count == 11 && s.hasPrefix("NEB") { s = String(s.dropFirst(3)) }
+        return s.count == 8 ? s : ""
+    }
+
+    /// Redeem a supporter code on this profile. nil on success, else a sentence.
+    public func redeem(_ raw: String) async -> String? {
+        guard linked else { return "Sign in first — the supporter mark lives on your profile." }
+        let code = Cloud.supportCode(raw)
+        if code.isEmpty { return "A code looks like NEB-XXXX-XXXX." }
+        do {
+            _ = try await api("POST", "/v1/support/redeem", ["code": code])
+            _ = await refreshProfile()
+            return nil
+        } catch {
+            if let f = error as? HTTPFailure, f.code == 404 || f.error.contains("code") { return "That code was not found, or it was already used." }
+            return Cloud.errorText(error)
+        }
+    }
+
+    /// Show or hide the name on the wall, or choose the mark (Supporter Plus and up).
+    public func setSupport(wall: Bool? = nil, mark: String? = nil) async -> String? {
+        var body: JSONObject = [:]
+        if let w = wall { body["wall"] = w }
+        if let m = mark, Profile.marks.contains(m) { body["mark"] = m }
+        do {
+            _ = try await api("PUT", "/v1/support", body)
+            _ = await refreshProfile()
+            return nil
+        } catch { return Cloud.errorText(error) }
     }
 }

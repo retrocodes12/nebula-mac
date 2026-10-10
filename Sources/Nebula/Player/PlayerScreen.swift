@@ -36,8 +36,12 @@ struct PlayerScreen: View {
     /// The volume the viewer last chose here, kept in Settings once — when the player closes or
     /// hands over to the next episode — rather than written to disk at every step of the slider.
     @State private var chosenVolume: Double?
+    /// Skip intro, Seekr's pictures and the subtitle nudge — the same object the phone uses.
+    @StateObject private var extras = PlayerExtras()
+    @State private var flash: String?
+    @State private var flashTask: Task<Void, Never>?
 
-    enum PlayerMenu: String { case audio, subtitles, speed, info }
+    enum PlayerMenu: String { case audio, subtitles, style, speed, info }
 
     init(request: PlayRequest, hardwareDecoding: Bool) {
         self.request = request
@@ -67,6 +71,9 @@ struct PlayerScreen: View {
                 .animation(.easeOut(duration: 0.25), value: chromeShown)
 
             if nextOffered, let n = next, mpv.failure == nil { nextPill(n) }
+            // outside the chrome: it stays while the controls sleep, as on the TV
+            else if let o = extras.skipOffer, model.prefs.skipIntro == "button", mpv.failure == nil { skipPill(o) }
+            if let f = flash { flashLabel(f) }
         }
         .onContinuousHover { phase in if case .active = phase { wake() } }
         .onAppear(perform: start)
@@ -75,6 +82,47 @@ struct PlayerScreen: View {
         .onChange(of: mpv.ended) { e in if e { reachedEnd() } }
         .onChange(of: mpv.loaded) { l in if l { loadedNow() } }
         .onChange(of: wantsAwake) { keepDisplayAwake($0) }
+        .onChange(of: model.subStyleVersion) { _ in applySubStyle() }
+    }
+
+    private func skipPill(_ o: PlayerExtras.SkipOffer) -> some View {
+        VStack {
+            Spacer()
+            HStack {
+                Spacer()
+                SkipPill(text: o.label) { extras.skipNow(mpv); wake() }
+            }
+            .padding(.trailing, 28).padding(.bottom, chromeShown ? 120 : 40)
+        }
+        .animation(.easeOut(duration: 0.2), value: chromeShown)
+    }
+
+    private func flashLabel(_ text: String) -> some View {
+        VStack {
+            Text(text)
+                .font(.system(size: 14, weight: .semibold)).foregroundStyle(.white)
+                .padding(.horizontal, 16).frame(height: 38)
+                .background(.ultraThinMaterial, in: Capsule())
+                .environment(\.colorScheme, .dark)
+                .padding(.top, 40)
+            Spacer()
+        }
+        .transition(.opacity)
+        .allowsHitTesting(false)
+    }
+
+    private func show(flash text: String) {
+        withAnimation(.easeOut(duration: 0.15)) { flash = text }
+        flashTask?.cancel()
+        flashTask = Task {
+            try? await Task.sleep(nanoseconds: 1_800_000_000)
+            if !Task.isCancelled { withAnimation(.easeOut(duration: 0.25)) { flash = nil } }
+        }
+    }
+
+    /// The profile's subtitle look, once one has ever been chosen (until then the engine's own).
+    private func applySubStyle() {
+        if model.prefs.subStyleChosen { mpv.applySubStyle(SubStyle.engineProperties(model.prefs.subStyle)) }
     }
 
     /// Playback is wanted: not paused, not at the end, not failed — playing, or still starting.
@@ -147,6 +195,13 @@ struct PlayerScreen: View {
         )
     }
 
+    /// Seekr's picture over the scrubber's time, once a track was found for this title.
+    private var seekrPreview: ((Double) -> AnyView)? {
+        guard extras.seekrReady else { return nil }
+        let x = extras
+        return { t in AnyView(SeekrTile(extras: x, secs: t)) }
+    }
+
     private var stepIcon: String { [5, 10, 15, 30, 45, 60].contains(model.prefs.seekStep) ? String(model.prefs.seekStep) : "10" }
 
     private var sourceLine: String {
@@ -169,7 +224,8 @@ struct PlayerScreen: View {
                 TimePill(text: Fmt.clock(scrubbing ?? mpv.timePos))
                 Scrubber(position: scrubbing ?? mpv.timePos, duration: mpv.duration, buffered: mpv.timePos + mpv.cacheAhead, accent: model.accent,
                          onDrag: { scrubbing = $0; wake() },
-                         onCommit: { mpv.seek(to: $0); scrubbing = nil; wake() })
+                         onCommit: { mpv.seek(to: $0); scrubbing = nil; wake() },
+                         preview: seekrPreview)
                 TimePill(text: "−" + Fmt.clock(max(0, mpv.duration - (scrubbing ?? mpv.timePos))))
             }
         }
@@ -199,6 +255,18 @@ struct PlayerScreen: View {
                     }
                     .frame(maxHeight: 280)
                     if list.isEmpty { menuNote(captions.settled ? "No subtitles were found for this." : "Looking for subtitles…") }
+                    Divider().overlay(Color.white.opacity(0.12)).padding(.vertical, 4)
+                    SubTimingControls(extras: extras, mpv: mpv, onGlass: true)
+                    menuRow("Style…", on: false) { withAnimation(.easeOut(duration: 0.18)) { menu = .style } }
+                case .style:
+                    HStack {
+                        Button(action: { withAnimation(.easeOut(duration: 0.18)) { menu = .subtitles }; wake() }) {
+                            Image(systemName: "chevron.left").font(.system(size: 11, weight: .bold)).foregroundStyle(.white)
+                        }
+                        .buttonStyle(.plain).padding(.leading, 12)
+                        menuTitle("Subtitle style")
+                    }
+                    SubStyleControls(onGlass: true)
                 case .speed:
                     menuTitle("Speed")
                     ForEach([0.5, 0.75, 1.0, 1.25, 1.5, 2.0], id: \.self) { s in
@@ -305,6 +373,8 @@ struct PlayerScreen: View {
                          step: Double(model.prefs.seekStep), art: t.episode?.thumbnail ?? t.item.background ?? t.item.poster)
         // an onChange does not fire for the value a view starts with, and this one starts true
         keepDisplayAwake(wantsAwake)
+        applySubStyle()
+        extras.startSkip(type: t.type, id: t.id, mode: model.prefs.skipIntro)
         let s = request.stream
         sourceTask = Task {
             let got = await PlaybackRules.source(for: s, maxHeight: model.prefs.maxHeight, stremio: model.stremio)
@@ -340,7 +410,13 @@ struct PlayerScreen: View {
     private func tick(_ t: Double) {
         guard mpv.loaded, !mpv.isLive, mpv.duration > 0 else { return }
         if abs(t - lastSaved) >= 5 { lastSaved = t; save() }
-        if model.prefs.autoplayNext, next != nil { nextOffered = mpv.duration - t <= 40 }
+        if let note = extras.tick(t, mode: model.prefs.skipIntro, live: mpv.isLive, mpv: mpv) { show(flash: note) }
+        // the credits started (where the episode says they do): Next is offered then, not 40 s from the end
+        if model.prefs.autoplayNext, next != nil { nextOffered = mpv.duration - t <= 40 || extras.inCredits(t) }
+        let target = request.target
+        extras.startSeekr(type: target.type, id: target.id, duration: mpv.duration, key: model.prefs.seekrKey) { [model] in
+            model.say("Seekr turned your key down — add it again in Settings › Playback.", error: true)
+        }
     }
 
     private func save() {
@@ -415,6 +491,8 @@ struct PlayerScreen: View {
         ManifestProxy.shared.release(manifestToken)
         manifestToken = nil
         save()
+        extras.stop()
+        flashTask?.cancel()
         keepVolume()
         nowPlaying.finish()
         keepDisplayAwake(false)
@@ -488,12 +566,15 @@ struct PlayerScreen: View {
         let step = Double(model.prefs.seekStep)
         switch ev.keyCode {
         case 49: playPause()                                         // space
+        case 36 where extras.skipOffer != nil && model.prefs.skipIntro == "button":   // return: take the Skip pill
+            extras.skipNow(mpv)
         case 123: mpv.seek(by: ev.modifierFlags.contains(.shift) ? -60 : -step)   // ←
         case 124: mpv.seek(by: ev.modifierFlags.contains(.shift) ? 60 : step)     // →
         case 126: setVolume((chosenVolume ?? mpv.volume) + 5)        // ↑
         case 125: setVolume((chosenVolume ?? mpv.volume) - 5)        // ↓
         case 53:                                                     // esc
-            if menu != nil { menu = nil }
+            if menu == .style { menu = .subtitles }
+            else if menu != nil { menu = nil }
             else if let w = NSApp.keyWindow, w.styleMask.contains(.fullScreen) { w.toggleFullScreen(nil) }
             else { close() }
         default:

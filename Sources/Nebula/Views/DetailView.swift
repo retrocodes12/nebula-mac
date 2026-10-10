@@ -12,6 +12,8 @@ struct DetailView: View {
     @State private var loading = true
     @State private var season: Int?
     @State private var expanded = false
+    /// What it follows, what follows it, its spin-offs and remakes (Nebula Cloud, a week's cache).
+    @State private var universe: [Universe.Item] = []
     /// How far the art runs up under a phone's status bar (0 on a Mac).
     @Environment(\.topBleed) private var bleed
     /// The credits' label column, which widens with a larger text size on a phone.
@@ -57,7 +59,9 @@ struct DetailView: View {
                     if isSeries, let m = meta { episodes(m) }
                     if loading && meta == nil { ProgressView().controlSize(.small).padding(.vertical, 20) }
                 }
-                .padding(.horizontal, Theme.pad).padding(.top, 22).padding(.bottom, 50)
+                .padding(.horizontal, Theme.pad).padding(.top, 22).padding(.bottom, universe.isEmpty ? 50 : 26)
+                // its own row, running past the reading column like the rows on Home
+                if !universe.isEmpty { universeRow.padding(.bottom, 50) }
             }
         }
         .background(Theme.bg)
@@ -70,6 +74,10 @@ struct DetailView: View {
                     ?? m.videos.map(\.season).filter { $0 > 0 }.min() ?? m.videos.first?.season
             }
             loading = false
+            if let id = Universe.idOf(item.id) {
+                universe = Universe.cached(id) ?? []
+                if universe.isEmpty, let got = await Universe.load(id), !Task.isCancelled { universe = got }
+            }
         }
     }
 
@@ -160,6 +168,25 @@ struct DetailView: View {
 
     private func openEpisode(_ ep: Episode, _ m: FullMeta) {
         model.push(.streams(StreamsTarget(type: item.type, id: ep.id, item: full, addonUrl: metaAddon?.manifestUrl ?? addonUrl, episode: ep, videos: m.videos)))
+    }
+
+    // MARK: universe
+
+    private var universeRow: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            RowHeader(title: "Universe")
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(alignment: .top, spacing: 16) {
+                    ForEach(universe) { u in
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(u.label.uppercased()).scaledFont(size: 10, weight: .medium, design: .monospaced).tracking(1).foregroundStyle(Theme.label3)
+                            PosterCard(item: u.meta, addonUrl: metaAddon?.manifestUrl ?? addonUrl, height: 200)
+                        }
+                    }
+                }
+                .padding(.horizontal, Theme.pad).padding(.vertical, 6)
+            }
+        }
     }
 
     // MARK: credits

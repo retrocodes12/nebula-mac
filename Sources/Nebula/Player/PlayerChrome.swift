@@ -52,8 +52,11 @@ struct Scrubber: View {
     let accent: Color
     let onDrag: (Double) -> Void
     let onCommit: (Double) -> Void
+    /// A picture of the moment under the pointer or the finger (Seekr's), drawn over the time.
+    var preview: ((Double) -> AnyView)? = nil
     @State private var held = false
     @State private var hoverX: CGFloat?
+    @State private var dragX: CGFloat?
 
     var body: some View {
         GeometryReader { geo in
@@ -67,20 +70,32 @@ struct Scrubber: View {
                 if held || hoverX != nil {
                     Circle().fill(.white).frame(width: 16, height: 16).offset(x: w * frac - 8).shadow(color: .black.opacity(0.4), radius: 3)
                 }
-                if let x = hoverX, !held, duration > 0 {
-                    Text(Fmt.clock(Double(x / w) * duration))
-                        .font(.system(size: 11, weight: .semibold, design: .monospaced)).foregroundStyle(.white)
-                        .padding(.horizontal, 8).frame(height: 22)
-                        .background(.ultraThinMaterial, in: Capsule()).environment(\.colorScheme, .dark)
-                        .fixedSize().offset(x: min(max(0, x - 26), w - 52), y: -26)
-                }
             }
             .frame(height: held ? 10 : 8)
             .frame(maxHeight: .infinity)
+            // the tip: the time under the pointer, or under the finger while it drags (a phone has
+            // no pointer, and a picture of where it is going is what a finger most needs), with
+            // Seekr's picture over it. Its foot sits just above the bar, centred on the spot.
+            .overlay(alignment: .bottomLeading) {
+                if let x = held ? dragX : hoverX, duration > 0, w > 0 {
+                    let t = Double(min(max(0, x / w), 1)) * duration
+                    let half = Scrubber.tipWidth / 2
+                    VStack(spacing: 6) {
+                        if let p = preview { p(t) }
+                        Text(Fmt.clock(t))
+                            .font(.system(size: 11, weight: .semibold, design: .monospaced)).foregroundStyle(.white)
+                            .padding(.horizontal, 8).frame(height: 22)
+                            .background(.ultraThinMaterial, in: Capsule()).environment(\.colorScheme, .dark)
+                    }
+                    .frame(width: Scrubber.tipWidth, alignment: .bottom)
+                    .offset(x: min(max(0, x - half), max(0, w - Scrubber.tipWidth)), y: -(Scrubber.band / 2 + 8))
+                    .allowsHitTesting(false)
+                }
+            }
             .contentShape(Rectangle())
             .gesture(DragGesture(minimumDistance: 0)
-                .onChanged { g in held = true; onDrag(Double(min(max(0, g.location.x / w), 1)) * duration) }
-                .onEnded { g in held = false; onCommit(Double(min(max(0, g.location.x / w), 1)) * duration) })
+                .onChanged { g in held = true; dragX = g.location.x; onDrag(Double(min(max(0, g.location.x / w), 1)) * duration) }
+                .onEnded { g in held = false; dragX = nil; onCommit(Double(min(max(0, g.location.x / w), 1)) * duration) })
             .onContinuousHover { phase in
                 if case .active(let p) = phase { hoverX = p.x } else { hoverX = nil }
             }
@@ -88,6 +103,9 @@ struct Scrubber: View {
         }
         .frame(height: Scrubber.band)
     }
+
+    /// The time tip's column (a Seekr picture is drawn 176 points wide in it).
+    static let tipWidth: CGFloat = 184
 
     /// The band a finger or the pointer grabs; the bar drawn in it stays 8 points. A phone needs
     /// Apple's 44 to hit it at all; a pointer does with 26.

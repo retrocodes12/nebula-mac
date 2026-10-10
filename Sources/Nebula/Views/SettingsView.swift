@@ -8,6 +8,10 @@ struct SettingsView: View {
     @State private var autoplayNext = true
     @State private var hwdec = true
     @State private var maxHeight = 0
+    @State private var skipIntro = "button"
+    @State private var seekrField = ""
+    @State private var seekrNote: String?
+    @State private var seekrBusy = false
 
     var body: some View {
         ScrollView {
@@ -20,7 +24,7 @@ struct SettingsView: View {
                     Panel {
                         PanelRow(title: "Accent", detail: "The one colour Nebula uses.") {
                             HStack(spacing: 8) {
-                                ForEach(Prefs.accents, id: \.hex) { a in
+                                ForEach(accentChoices, id: \.hex) { a in
                                     Button(action: { model.prefs.accent = a.hex; model.accentHex = a.hex }) {
                                         Circle().fill(Color(hex: a.hex)).frame(width: 22, height: 22)
                                             .overlay(Circle().strokeBorder(.white, lineWidth: model.accentHex == a.hex ? 2 : 0).padding(-3))
@@ -42,6 +46,14 @@ struct SettingsView: View {
                             Toggle("", isOn: $autoplayNext).toggleStyle(.switch).labelsHidden().controlSize(.small)
                         }
                         Hairline()
+                        PanelRow(title: "Skip intros and recaps", detail: "For series: a Skip button while they play, or skip them by themselves.") {
+                            HStack(spacing: 6) {
+                                ForEach([("button", "Button"), ("auto", "Auto"), ("off", "Off")], id: \.0) { m in Chip(text: m.1, on: skipIntro == m.0) { skipIntro = m.0 } }
+                            }
+                        }
+                        Hairline()
+                        seekrRow
+                        Hairline()
                         PanelRow(title: skipTitle, detail: skipDetail) {
                             HStack(spacing: 6) { ForEach([5, 10, 15, 30], id: \.self) { s in Chip(text: "\(s) s", on: seekStep == s) { seekStep = s } } }
                         }
@@ -54,6 +66,16 @@ struct SettingsView: View {
                             Toggle("", isOn: $hwdec).toggleStyle(.switch).labelsHidden().controlSize(.small)
                         }
                     }
+                }
+
+                section("Subtitles") {
+                    Panel {
+                        SubStyleControls().padding(.vertical, 10)
+                    }
+                }
+
+                if model.supportVisible {
+                    section("Support Nebula") { SupportPanel() }
                 }
 
                 section("About") {
@@ -79,7 +101,9 @@ struct SettingsView: View {
         .onAppear {
             seekStep = model.prefs.seekStep; resume = model.prefs.resume
             autoplayNext = model.prefs.autoplayNext; hwdec = model.prefs.hardwareDecoding; maxHeight = model.prefs.maxHeight
+            skipIntro = model.prefs.skipIntro
         }
+        .onChange(of: skipIntro) { model.prefs.skipIntro = $0 }
         .onChange(of: seekStep) { model.prefs.seekStep = $0 }
         .onChange(of: resume) { model.prefs.resume = $0 }
         .onChange(of: autoplayNext) { model.prefs.autoplayNext = $0 }
@@ -95,6 +119,58 @@ struct SettingsView: View {
     private let skipTitle = "Skip by"
     private let skipDetail = "How far a double tap or the skip buttons move."
     #endif
+
+    /// Gold, Ice and Mint join the seven for supporters.
+    private var accentChoices: [(name: String, hex: String)] {
+        (model.profile?.rank ?? 0) >= 1 ? Prefs.accents + Prefs.supporterAccents : Prefs.accents
+    }
+
+    /// Seekr previews with the viewer's own seekr.tv key: pictures over the scrubber. The key goes
+    /// to Seekr and to the viewer's profile (so the TV has it too), nowhere else.
+    @ViewBuilder private var seekrRow: some View {
+        let _ = model.seekrVersion
+        let key = model.prefs.seekrKey
+        if !key.isEmpty {
+            PanelRow(title: "Seekr previews", detail: seekrNote ?? "Pictures while you scrub, from your own seekr.tv key ending \(key.suffix(4)).") {
+                Button("Disconnect") { model.setSeekrKey(""); seekrNote = nil }.buttonStyle(PillButtonStyle(filled: false))
+            }
+        } else {
+            VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Seekr previews").scaledFont(size: 14, weight: .medium).foregroundStyle(Theme.ink)
+                    Text(seekrNote ?? "Pictures while you scrub through films and episodes. Paste your own key from seekr.tv.")
+                        .scaledFont(size: 12.5).foregroundStyle(Theme.label2).fixedSize(horizontal: false, vertical: true)
+                }
+                HStack(spacing: 8) {
+                    TextField("sk_live_…", text: $seekrField)
+                        .entry(.key)
+                        .textFieldStyle(.plain).scaledFont(size: 12.5, design: .monospaced)
+                        .padding(.horizontal, 10).padding(.vertical, 6).frame(minHeight: 34)
+                        .background(RoundedRectangle(cornerRadius: 8).fill(Theme.surface2))
+                        .onSubmit(connectSeekr)
+                    Button(action: connectSeekr) { if seekrBusy { ProgressView().controlSize(.small) } else { Text("Connect") } }
+                        .buttonStyle(PillButtonStyle(filled: false)).disabled(seekrBusy)
+                }
+            }
+            .padding(.horizontal, 16).padding(.vertical, 12)
+        }
+    }
+
+    private func connectSeekr() {
+        let k = seekrField.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !seekrBusy else { return }
+        guard Seekr.validKey(k) else { seekrNote = "That is not a Seekr key — they start sk_live_."; return }
+        seekrBusy = true
+        Task {
+            let r = await Seekr.validate(k)
+            seekrBusy = false
+            switch r {
+            case .ok: model.setSeekrKey(k); seekrField = ""; seekrNote = nil; model.say("Seekr connected.")
+            case .refused: seekrNote = "Seekr did not accept that key."
+            case .unreachable: seekrNote = "Could not reach Seekr — try again in a moment."
+            }
+        }
+    }
 
     private func section<C: View>(_ title: String, @ViewBuilder content: () -> C) -> some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -181,7 +257,10 @@ struct ProfilePanel: View {
                 Circle().fill(Color(hex: p.avatar)).frame(width: 44, height: 44)
                     .overlay(Text(String(p.name.prefix(1)).uppercased()).font(.system(size: 18, weight: .bold)).foregroundStyle(.white))
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(p.name).scaledFont(size: 15, weight: .semibold).foregroundStyle(Theme.ink)
+                    HStack(spacing: 6) {
+                        Text(p.name).scaledFont(size: 15, weight: .semibold).foregroundStyle(Theme.ink)
+                        if p.supporter { SupporterMark(mark: p.shownMark, size: 12) }
+                    }
                     Text("@\(p.handle)").scaledFont(size: 12, design: .monospaced).foregroundStyle(Theme.label2)
                 }
                 Spacer()

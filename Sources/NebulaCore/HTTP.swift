@@ -86,6 +86,8 @@ public enum Net {
     /// serves its direct cards instead of the "open in Nebula" launcher meant for other clients.
     public static let userAgent = "NebulaPlayer"
     public static let clientName = "macos"
+    /// What this player can do that an add-on may ask about before offering a row.
+    public static let caps = "headers"
 
     public static func sameOrigin(_ a: URL, _ b: URL) -> Bool {
         guard let scheme = a.scheme?.lowercased(), ["http", "https"].contains(scheme),
@@ -99,6 +101,10 @@ public enum Net {
         r.setValue("*/*", forHTTPHeaderField: "Accept")
         r.setValue(userAgent, forHTTPHeaderField: "User-Agent")
         r.setValue(clientName, forHTTPHeaderField: "X-Nebula-Client")
+        // this player sends a stream's own request headers on every request of its play (the
+        // engine's header fields, and the loopback playlist path for HLS) — so an add-on may
+        // offer rows that only play with them, as Android 1.90.0 told it too
+        r.setValue(caps, forHTTPHeaderField: "X-Nebula-Caps")
         return r
     }
 }

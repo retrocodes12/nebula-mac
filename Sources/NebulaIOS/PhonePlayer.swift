@@ -38,6 +38,8 @@ struct PhonePlayer: View {
     @State private var resumeAfterInterruption = false
     /// The lock screen's card and the headphones' buttons.
     @State private var nowPlaying = NowPlaying()
+    /// Skip intro, Seekr's pictures and the subtitle nudge — the same object the Mac uses.
+    @StateObject private var extras = PlayerExtras()
 
     enum PlayerSheet: String, Identifiable { case audio, subtitles, speed, info; var id: String { rawValue } }
 
@@ -77,14 +79,16 @@ struct PhonePlayer: View {
 
             if locked { lockPill }
             if nextOffered, let n = next, mpv.failure == nil, !locked { nextPill(n) }
+            else if let o = extras.skipOffer, model.prefs.skipIntro == "button", mpv.failure == nil, !locked { skipPill(o) }
             if let f = mpv.failure { failureCard(f) }
         }
         .background(keyboardKeys)
         .statusBarHidden(true)
         .persistentSystemOverlays(.hidden)
         .sheet(item: $sheet) { s in
-            PlayerSheetView(kind: s, mpv: mpv, subsAdded: captions.settled, infoRows: infoRows, prefs: model.prefs,
+            PlayerSheetView(kind: s, mpv: mpv, extras: extras, subsAdded: captions.settled, infoRows: infoRows, prefs: model.prefs,
                             onSubtitlePick: { captions.picked() })
+                .environmentObject(model)
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
                 .preferredColorScheme(.dark)
@@ -95,6 +99,7 @@ struct PhonePlayer: View {
         .onChange(of: mpv.ended) { e in if e { reachedEnd() } }
         .onChange(of: mpv.loaded) { l in if l { loadedNow() } }
         .onChange(of: wantsAwake) { awakeNow($0) }
+        .onChange(of: model.subStyleVersion) { _ in applySubStyle() }
         // the hide timer stands down while a sheet is up, so closing one has to re-arm it or the
         // chrome sits there for good
         .onChange(of: sheet) { s in if s == nil { wake() } }
@@ -245,6 +250,7 @@ struct PhonePlayer: View {
             Button("Back") { skip(forward: false) }.keyboardShortcut(.leftArrow, modifiers: [])
             Button("Forward") { skip(forward: true) }.keyboardShortcut(.rightArrow, modifiers: [])
             Button("Close") { close() }.keyboardShortcut(.escape, modifiers: [])
+            Button("Skip") { if model.prefs.skipIntro == "button" { extras.skipNow(mpv) } }.keyboardShortcut(.return, modifiers: [])
         }
         .opacity(0)
         .accessibilityHidden(true)
@@ -330,6 +336,31 @@ struct PhonePlayer: View {
         )
     }
 
+    /// Seekr's picture over the scrubber's time while a finger drags, once a track was found.
+    private var seekrPreview: ((Double) -> AnyView)? {
+        guard extras.seekrReady else { return nil }
+        let x = extras
+        return { t in AnyView(SeekrTile(extras: x, secs: t, width: 160)) }
+    }
+
+    private func skipPill(_ o: PlayerExtras.SkipOffer) -> some View {
+        VStack {
+            Spacer()
+            HStack {
+                Spacer()
+                SkipPill(text: o.label) { extras.skipNow(mpv); wake() }
+                    .padding(.trailing, 12)
+                    .padding(.bottom, chromeShown ? 118 : 12)
+            }
+        }
+        .animation(.easeOut(duration: 0.2), value: chromeShown)
+    }
+
+    /// The profile's subtitle look, once one has ever been chosen (until then the engine's own).
+    private func applySubStyle() {
+        if model.prefs.subStyleChosen { mpv.applySubStyle(SubStyle.engineProperties(model.prefs.subStyle)) }
+    }
+
     private var stepIcon: String { [5, 10, 15, 30, 45, 60].contains(model.prefs.seekStep) ? String(model.prefs.seekStep) : "10" }
 
     private var sourceLine: String {
@@ -353,7 +384,8 @@ struct PhonePlayer: View {
                 Scrubber(position: scrubbing ?? mpv.timePos, duration: mpv.duration,
                          buffered: mpv.timePos + mpv.cacheAhead, accent: model.accent,
                          onDrag: { scrubbing = $0; wake() },
-                         onCommit: { mpv.seek(to: $0); scrubbing = nil; wake() })
+                         onCommit: { mpv.seek(to: $0); scrubbing = nil; wake() },
+                         preview: seekrPreview)
                 TimePill(text: "−" + Fmt.clock(max(0, mpv.duration - (scrubbing ?? mpv.timePos))))
             }
         }
@@ -453,6 +485,8 @@ struct PhonePlayer: View {
         // an onChange does not fire for the value a view starts with, and this one starts true
         awakeNow(wantsAwake)
         holdLandscape()
+        applySubStyle()
+        extras.startSkip(type: t.type, id: t.id, mode: model.prefs.skipIntro)
         let s = request.stream
         sourceTask = Task {
             let got = await PlaybackRules.source(for: s, maxHeight: model.prefs.maxHeight, stremio: model.stremio)
@@ -490,7 +524,13 @@ struct PhonePlayer: View {
     private func tick(_ t: Double) {
         guard mpv.loaded, !mpv.isLive, mpv.duration > 0 else { return }
         if abs(t - lastSaved) >= 5 { lastSaved = t; save() }
-        if model.prefs.autoplayNext, next != nil { nextOffered = mpv.duration - t <= 40 }
+        if let note = extras.tick(t, mode: model.prefs.skipIntro, live: mpv.isLive, mpv: mpv) { show(flash: note) }
+        // the credits started (where the episode says they do): Next is offered then, not 40 s from the end
+        if model.prefs.autoplayNext, next != nil { nextOffered = mpv.duration - t <= 40 || extras.inCredits(t) }
+        let target = request.target
+        extras.startSeekr(type: target.type, id: target.id, duration: mpv.duration, key: model.prefs.seekrKey) { [model] in
+            model.say("Seekr turned your key down — add it again in Settings › Playback.", error: true)
+        }
     }
 
     private func save() {
@@ -565,6 +605,7 @@ struct PhonePlayer: View {
         save()
         hideTask?.cancel()
         flashTask?.cancel()
+        extras.stop()
         nowPlaying.finish()
         awakeNow(false)
         // the screen turns back only when no other player has taken it over (the next episode's
@@ -639,6 +680,7 @@ struct PhoneVideoSurface: UIViewRepresentable {
 struct PlayerSheetView: View {
     let kind: PhonePlayer.PlayerSheet
     @ObservedObject var mpv: MPVController
+    @ObservedObject var extras: PlayerExtras
     let subsAdded: Bool
     let infoRows: [(String, String)]
     let prefs: Prefs
@@ -664,6 +706,12 @@ struct PlayerSheetView: View {
                         }
                     }
                     if list.isEmpty { note(subsAdded ? "No subtitles were found for this." : "Looking for subtitles…") }
+                    Section("Timing") {
+                        SubTimingControls(extras: extras, mpv: mpv).listRowBackground(Theme.surface)
+                    }
+                    Section("Style") {
+                        SubStyleControls().padding(.vertical, 4).listRowBackground(Theme.surface)
+                    }
                 case .speed:
                     ForEach([0.5, 0.75, 1.0, 1.25, 1.5, 2.0], id: \.self) { s in
                         row(s == 1 ? "Normal" : String(format: "%g×", s), on: abs(mpv.speed - s) < 0.01) { mpv.setSpeed(s) }

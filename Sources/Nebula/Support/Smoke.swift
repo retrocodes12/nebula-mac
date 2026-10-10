@@ -1,7 +1,9 @@
 import Foundation
 import NebulaCore
 
-/// `Nebula --smoke <address> [--keys kid:key,…] [--seconds n] [--direct]`
+/// `Nebula --smoke <address> [--keys kid:key,…] [--seconds n] [--direct] [--header 'Name: value']…`
+/// With `--header`, an HLS address takes the player's road for a row that names its own headers:
+/// the loopback playlist path (ManifestProxy.openHls), which also unwraps wrapped pieces.
 /// Plays with no window and no sound device, and exits 0 only if the clock moved. This is what
 /// proves, on a build machine, that the engine links, opens the network, reads the container
 /// and — with keys — decrypts.
@@ -30,7 +32,14 @@ enum Smoke {
         Task { @MainActor in
             // the same road the player takes: the loopback manifest cache, then the licence
             var play = address
-            if ClearKey.looksLikeDash(address) && !args.contains("--direct") {
+            var headers: [String: String] = [:]
+            for (i, a) in args.enumerated() where a == "--header" && i + 1 < args.count {
+                let kv = args[i + 1].split(separator: ":", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
+                if kv.count == 2 { headers[kv[0]] = kv[1] }
+            }
+            if !headers.isEmpty && HlsUnwrap.isPlaylist(address) && !args.contains("--direct") {
+                if let h = await ManifestProxy.shared.openHls(address, headers: headers) { play = h.address }
+            } else if ClearKey.looksLikeDash(address) && !args.contains("--direct") {
                 if let m = await ManifestProxy.shared.open(address, headers: [:], maxHeight: 0) {
                     play = m.address
                     if state.keys.isEmpty { state.keys = await ClearKey.resolve(xml: m.xml, manifestUrl: m.base, using: Stremio()) }
@@ -38,7 +47,7 @@ enum Smoke {
             }
             if state.keys.isEmpty && ClearKey.looksLikeDash(address) { state.keys = await ClearKey.resolve(manifestUrl: address, using: Stremio()) }
             state.viaProxy = play != address
-            mpv.load(url: play, keys: state.keys)
+            mpv.load(url: play, keys: state.keys, headers: play == address ? headers : [:])
         }
         // the engine publishes on the main queue, so the main run loop has to turn
         let timer = Timer(timeInterval: 0.25, repeats: true) { _ in

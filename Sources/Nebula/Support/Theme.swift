@@ -301,6 +301,7 @@ extension View {
         case .newPassword: self.textInputAutocapitalization(.never).autocorrectionDisabled().textContentType(.newPassword)
         case .address: self.textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL).textContentType(.URL)
         case .code: self.textInputAutocapitalization(.characters).autocorrectionDisabled()
+        case .key: self.textInputAutocapitalization(.never).autocorrectionDisabled()
         }
         #else
         self
@@ -308,7 +309,7 @@ extension View {
     }
 }
 
-enum EntryKind { case handle, password, newPassword, address, code }
+enum EntryKind { case handle, password, newPassword, address, code, key }
 
 /// The small monospaced line above a title: a kicker, a count, a label.
 struct Eyebrow: View {
