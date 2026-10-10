@@ -13,7 +13,11 @@ struct SettingsView: View {
     @State private var seekrNote: String?
     @State private var seekrBusy = false
 
+    /// The screenshot rig's way to the lower sections (Shots posts a section id).
+    static let shotsScroll = Notification.Name("nebula.shots.settingsScroll")
+
     var body: some View {
+        ScrollViewReader { reader in
         ScrollView {
             VStack(alignment: .leading, spacing: 30) {
                 Text("Settings").scaledFont(size: 30, weight: .bold).foregroundStyle(Theme.ink).padding(.top, 56)
@@ -36,7 +40,7 @@ struct SettingsView: View {
                     }
                 }
 
-                section("Playback") {
+                section("Playback", id: "playback") {
                     Panel {
                         PanelRow(title: "Pick up where you left off", detail: "Start a title from the place you stopped.") {
                             Toggle("", isOn: $resume).toggleStyle(.switch).labelsHidden().controlSize(.small)
@@ -68,7 +72,7 @@ struct SettingsView: View {
                     }
                 }
 
-                section("Subtitles") {
+                section("Subtitles", id: "subtitles") {
                     Panel {
                         SubStyleControls().padding(.vertical, 10)
                     }
@@ -98,6 +102,10 @@ struct SettingsView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .background(Theme.bg)
+        .onReceive(NotificationCenter.default.publisher(for: SettingsView.shotsScroll)) { n in
+            if let id = n.object as? String { reader.scrollTo(id, anchor: .top) }
+        }
+        }
         .onAppear {
             seekStep = model.prefs.seekStep; resume = model.prefs.resume
             autoplayNext = model.prefs.autoplayNext; hwdec = model.prefs.hardwareDecoding; maxHeight = model.prefs.maxHeight
@@ -172,11 +180,12 @@ struct SettingsView: View {
         }
     }
 
-    private func section<C: View>(_ title: String, @ViewBuilder content: () -> C) -> some View {
+    private func section<C: View>(_ title: String, id: String? = nil, @ViewBuilder content: () -> C) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Eyebrow(title)
             content()
         }
+        .id(id ?? title)
     }
 }
 

@@ -58,6 +58,12 @@ enum Shots {
                 await settle(atLeast: t == .search ? 5 : 1.5) { true }
                 await snap(window, dir, "0\(7 + i)-\(t.rawValue)")
             }
+            // the rest of Settings (Skip intros, Seekr, Subtitles, Support): the page scrolls to a section on request
+            for (n, section) in [(1, "playback"), (2, "subtitles")] {
+                NotificationCenter.default.post(name: SettingsView.shotsScroll, object: section)
+                await pause(1.2)
+                await snap(window, dir, "10\(n == 1 ? "b" : "c")-settings-\(section)")
+            }
             // the player, in the real window: the picture proves the Metal path, not just the decoder
             if let address = ProcessInfo.processInfo.environment["NEBULA_SHOTS_PLAY"], !address.isEmpty {
                 m.select(.home)
@@ -71,6 +77,12 @@ enum Shots {
                                              isARepeat: false, keyCode: 49) { NSApp.postEvent(ev, atStart: false) }
                 await pause(1.5)
                 await snap(window, dir, "12-player-chrome")
+                // C opens the Subtitles panel: the timing nudge and the way to the style
+                if let ev = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                             windowNumber: window.windowNumber, context: nil, characters: "c", charactersIgnoringModifiers: "c",
+                                             isARepeat: false, keyCode: 8) { NSApp.postEvent(ev, atStart: false) }
+                await pause(1.5)
+                await snap(window, dir, "12b-player-subtitles")
                 m.player = nil
                 await pause(1)
             }
