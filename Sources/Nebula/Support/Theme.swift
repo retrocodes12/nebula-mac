@@ -422,7 +422,8 @@ struct PanelRow<Trailing: View>: View {
         // chips left the words a column one word wide
         ViewThatFits(in: .horizontal) {
             HStack(spacing: 16) {
-                words.frame(minWidth: 180, alignment: .leading)
+                // the words measured at 250 points, not at their one-line length: the choice is about room for the controls
+                words.frame(minWidth: 180, idealWidth: 250, maxWidth: .infinity, alignment: .leading)
                 Spacer(minLength: 12)
                 trailing
             }
