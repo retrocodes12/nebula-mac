@@ -418,15 +418,27 @@ struct PanelRow<Trailing: View>: View {
     @ViewBuilder var trailing: Trailing
 
     var body: some View {
-        HStack(spacing: 16) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title).scaledFont(size: 14, weight: .medium).foregroundStyle(Theme.ink)
-                if let d = detail { Text(d).scaledFont(size: 12).foregroundStyle(Theme.label2).fixedSize(horizontal: false, vertical: true) }
+        // beside the words while both fit (a window, an iPad); under them on a phone, where a row of three or four
+        // chips left the words a column one word wide
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 16) {
+                words.frame(minWidth: 180, alignment: .leading)
+                Spacer(minLength: 12)
+                trailing
             }
-            Spacer(minLength: 12)
-            trailing
+            VStack(alignment: .leading, spacing: 10) {
+                words
+                trailing
+            }
         }
         .padding(.horizontal, 16).padding(.vertical, 12)
+    }
+
+    private var words: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title).scaledFont(size: 14, weight: .medium).foregroundStyle(Theme.ink)
+            if let d = detail { Text(d).scaledFont(size: 12).foregroundStyle(Theme.label2).fixedSize(horizontal: false, vertical: true) }
+        }
     }
 }
 

@@ -248,12 +248,11 @@ struct PlayerScreen: View {
                     menuTitle("Subtitles")
                     let list = mpv.tracks.filter { $0.type == "sub" }
                     menuRow("Off", on: !list.contains { $0.selected }) { captions.picked(); mpv.selectTrack("sub", id: nil); model.prefs.subLang = "" }
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 2) {
-                            ForEach(list) { t in menuRow(t.label + (t.external ? "" : " · in the file"), on: t.selected) { captions.picked(); mpv.selectTrack("sub", id: t.id); model.prefs.subLang = Lang.key(t.lang) } }
-                        }
+                    // a scroller takes its whole 280 points even with nothing in it: only a long list scrolls
+                    let rows = VStack(alignment: .leading, spacing: 2) {
+                        ForEach(list) { t in menuRow(t.label + (t.external ? "" : " · in the file"), on: t.selected) { captions.picked(); mpv.selectTrack("sub", id: t.id); model.prefs.subLang = Lang.key(t.lang) } }
                     }
-                    .frame(maxHeight: 280)
+                    if list.count > 8 { ScrollView { rows }.frame(maxHeight: 280) } else { rows }
                     if list.isEmpty { menuNote(captions.settled ? "No subtitles were found for this." : "Looking for subtitles…") }
                     Divider().overlay(Color.white.opacity(0.12)).padding(.vertical, 4)
                     SubTimingControls(extras: extras, mpv: mpv, onGlass: true)
