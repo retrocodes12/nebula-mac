@@ -55,5 +55,6 @@ class H(BaseHTTPRequestHandler):
         sys.stderr.write("wrapped-hls: %s %s\n" % (self.path[:40], self.headers.get("Referer")))
 
 
+server = ThreadingHTTPServer(("127.0.0.1", port), H)   # bound before it says so
 print("serving %d wrapped pieces on %d" % (len(pieces), port), flush=True)
-ThreadingHTTPServer(("127.0.0.1", port), H).serve_forever()
+server.serve_forever()

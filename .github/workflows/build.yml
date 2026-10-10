@@ -58,8 +58,8 @@ jobs:
           # the sports add-on's "India only" rows (scripts/wrapped-hls.py says how they look)
           python3 scripts/wrapped-hls.py 8899 > /tmp/wrapped.log 2>&1 &
           for i in $(seq 1 60); do grep -q serving /tmp/wrapped.log && break; sleep 1; done
-          cat /tmp/wrapped.log
-          NEBULA_MPV_DEBUG=1 dist/Nebula.app/Contents/MacOS/Nebula --smoke "http://127.0.0.1:8899/t/abc/index.m3u8" --header "Referer: https://iplayer.is/" --seconds 3 2>&1 | tail -60 || true
+          # the runner's first connection to a fresh local server can sit for 20 s; take it here, not in the smoke
+          curl -s -m 40 --retry 3 -o /dev/null -w "fixture %{http_code}\n" -H "Referer: https://iplayer.is/" http://127.0.0.1:8899/t/abc/index.m3u8
           cat /tmp/wrapped.log
           dist/Nebula.app/Contents/MacOS/Nebula --smoke "http://127.0.0.1:8899/t/abc/index.m3u8" --header "Referer: https://iplayer.is/" --seconds 3
       - name: Smoke — a live protected stream from the sports add-on, keys from its licence
@@ -212,6 +212,7 @@ jobs:
           run "HLS" "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8" --seconds 3 || failed=1
           python3 scripts/wrapped-hls.py 8899 > /tmp/wrapped.log 2>&1 &
           for i in $(seq 1 60); do grep -q serving /tmp/wrapped.log && break; sleep 1; done
+          curl -s -m 40 --retry 3 -o /dev/null -w "fixture %{http_code}\n" -H "Referer: https://iplayer.is/" http://127.0.0.1:8899/t/abc/index.m3u8
           run "a stream that needs its Referer, pieces in pictures" "http://127.0.0.1:8899/t/abc/index.m3u8" --header "Referer: https://iplayer.is/" --seconds 3 || failed=1
           exit $failed
       - name: Screens
