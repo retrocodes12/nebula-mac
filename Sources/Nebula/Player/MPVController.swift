@@ -39,6 +39,14 @@ final class MPVController: ObservableObject {
     @Published var volume: Double = 100
     @Published var muted = false
     @Published var speed: Double = 1
+    /// Picture size: "fit" (the whole picture), "fill" (covers the screen, trims the edges), "stretch" (fills it, changes
+    /// the shape). Kept on this device; mpv's panscan / keepaspect do the work, so subtitles stay mpv's to place.
+    @Published private(set) var fit = MPVController.savedFit
+    static var savedFit: String {
+        let v = UserDefaults.standard.string(forKey: "nebula.fit") ?? "fit"
+        return v == "fill" || v == "stretch" ? v : "fit"
+    }
+    static func fitName(_ v: String) -> String { v == "fill" ? "Fill" : v == "stretch" ? "Stretch" : "Fit" }
     @Published var cacheAhead: Double = 0
     @Published var seekable = true
     @Published var videoHeight = 0
@@ -100,6 +108,7 @@ final class MPVController: ObservableObject {
         set("sub-auto", "no"); set("sub-visibility", "yes")
         set("sub-font-size", "44"); set("sub-border-size", "2.4"); set("sub-shadow-offset", "0")
         set("audio-channels", "auto-safe")
+        set("panscan", fit == "fill" ? "1" : "0"); set("keepaspect", fit == "stretch" ? "no" : "yes")
         set("screenshot-directory", NSTemporaryDirectory())
         check(mpv_initialize(h))
 
@@ -166,6 +175,11 @@ final class MPVController: ObservableObject {
     func setVolume(_ v: Double) { setDouble("volume", min(130, max(0, v))) }
     func toggleMute() { setFlag("mute", !muted) }
     func setSpeed(_ s: Double) { setDouble("speed", s) }
+    func setFit(_ mode: String) {
+        let m = mode == "fill" || mode == "stretch" ? mode : "fit"
+        fit = m; UserDefaults.standard.set(m, forKey: "nebula.fit")
+        setProperty("panscan", m == "fill" ? "1" : "0"); setProperty("keepaspect", m == "stretch" ? "no" : "yes")
+    }
 
     func selectTrack(_ type: String, id: Int?) {
         guard engine != nil else { return }

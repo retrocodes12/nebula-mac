@@ -41,7 +41,7 @@ struct PlayerScreen: View {
     @State private var flash: String?
     @State private var flashTask: Task<Void, Never>?
 
-    enum PlayerMenu: String { case audio, subtitles, style, speed, info }
+    enum PlayerMenu: String { case audio, subtitles, style, speed, fit, info }
 
     init(request: PlayRequest, hardwareDecoding: Bool) {
         self.request = request
@@ -181,6 +181,7 @@ struct PlayerScreen: View {
                     barButton("captions.bubble", "Subtitles", .subtitles)
                     barButton("waveform", "Audio", .audio)
                     barButton("speedometer", "Speed", .speed)
+                    barButton("aspectratio", "Picture size", .fit)
                     barButton("info.circle", "Info", .info)
                     GlassCircle(icon: "arrow.up.left.and.arrow.down.right", label: "Full screen", size: 38) { toggleFullScreen() }
                 }
@@ -270,6 +271,11 @@ struct PlayerScreen: View {
                     menuTitle("Speed")
                     ForEach([0.5, 0.75, 1.0, 1.25, 1.5, 2.0], id: \.self) { s in
                         menuRow(s == 1 ? "Normal" : String(format: "%g×", s), on: abs(mpv.speed - s) < 0.01) { mpv.setSpeed(s) }
+                    }
+                case .fit:
+                    menuTitle("Picture size")
+                    ForEach(["fit", "fill", "stretch"], id: \.self) { m in
+                        menuRow(MPVController.fitName(m), on: mpv.fit == m) { mpv.setFit(m) }
                     }
                 case .info:
                     menuTitle("Info")

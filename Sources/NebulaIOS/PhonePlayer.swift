@@ -41,7 +41,7 @@ struct PhonePlayer: View {
     /// Skip intro, Seekr's pictures and the subtitle nudge — the same object the Mac uses.
     @StateObject private var extras = PlayerExtras()
 
-    enum PlayerSheet: String, Identifiable { case audio, subtitles, speed, info; var id: String { rawValue } }
+    enum PlayerSheet: String, Identifiable { case audio, subtitles, speed, fit, info; var id: String { rawValue } }
 
     init(request: PlayRequest, hardwareDecoding: Bool) {
         self.request = request
@@ -321,6 +321,7 @@ struct PhonePlayer: View {
                     barButton("waveform", "Audio", .audio)
                     Spacer()
                     barButton("speedometer", "Speed", .speed)
+                    barButton("aspectratio", "Picture size", .fit)
                     barButton("info.circle", "Info", .info)
                 }
             }
@@ -716,6 +717,10 @@ struct PlayerSheetView: View {
                     ForEach([0.5, 0.75, 1.0, 1.25, 1.5, 2.0], id: \.self) { s in
                         row(s == 1 ? "Normal" : String(format: "%g×", s), on: abs(mpv.speed - s) < 0.01) { mpv.setSpeed(s) }
                     }
+                case .fit:
+                    ForEach(["fit", "fill", "stretch"], id: \.self) { m in
+                        row(MPVController.fitName(m), on: mpv.fit == m) { mpv.setFit(m) }
+                    }
                 case .info:
                     ForEach(infoRows, id: \.0) { r in
                         HStack {
@@ -743,6 +748,7 @@ struct PlayerSheetView: View {
         case .audio: return "Audio"
         case .subtitles: return "Subtitles"
         case .speed: return "Speed"
+        case .fit: return "Picture size"
         case .info: return "Info"
         }
     }
