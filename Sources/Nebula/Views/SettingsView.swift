@@ -24,6 +24,8 @@ struct SettingsView: View {
 
                 section("Profile") { ProfilePanel() }
 
+                section("Who's watching") { WhoSettings() }
+
                 section("Appearance") {
                     Panel {
                         PanelRow(title: "Accent", detail: "The one colour Nebula uses.") {

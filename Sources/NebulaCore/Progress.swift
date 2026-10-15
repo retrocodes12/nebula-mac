@@ -73,7 +73,14 @@ public final class ProgressStore: @unchecked Sendable {
     /// Add-ons switched off in the list; their titles stay out of Continue watching.
     public var disabledAddons: () -> Set<String> = { [] }
 
+    /// Whose history this is (Viewers.swift): the second profile's lives under its own name.
+    public var viewers: Viewers?
+
     public init(store: Store) { self.store = store }
+
+    private var storeKey: String { viewers?.key("progress") ?? "progress" }
+    /// The other profile's history from now on: read again on the next ask.
+    public func reset() { lock.lock(); cache = nil; lock.unlock() }
 
     public static func key(_ type: String, _ id: String) -> String { "\(type):\(id)" }
 
@@ -81,7 +88,7 @@ public final class ProgressStore: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         if let c = cache { return c }
         var m: [String: ProgressRec] = [:]
-        for (k, v) in store.object("progress") {
+        for (k, v) in store.object(storeKey) {
             if let o = v as? JSONObject, let r = ProgressRec(wire: o) { m[k] = r }
         }
         cache = m
@@ -122,7 +129,7 @@ public final class ProgressStore: @unchecked Sendable {
         lock.lock(); cache = m; lock.unlock()
         var o: JSONObject = [:]
         for (k, r) in m { o[k] = r.wire }
-        store.setObject("progress", o)
+        store.setObject(storeKey, o)
     }
 
     public func get(_ type: String, _ id: String) -> ProgressRec? { all()[ProgressStore.key(type, id)] }

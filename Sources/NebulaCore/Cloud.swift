@@ -95,7 +95,7 @@ public struct DeviceRec: Equatable, Identifiable, Sendable {
 /// them, so they pass through untouched.
 public actor Cloud {
     public static let defaultBase = "https://play.rifflehq.in/cloud"
-    static let syncKeys = ["addons", "progress", "library", "sub_style", "seekr"]
+    static let syncKeys = ["addons", "progress", "library", "sub_style", "seekr", "viewers"]
 
     let base: String
     let store: Store
@@ -127,10 +127,15 @@ public actor Cloud {
 
     public init(store: Store, addons: AddonStore, progress: ProgressStore, library: LibraryStore,
                 transport: Transport = URLSessionTransport(), base: String = Cloud.defaultBase, deviceName: String = "Mac",
-                platform: String = "macos") {
+                platform: String = "macos", viewers: Viewers? = nil) {
         self.store = store; self.addons = addons; self.progress = progress; self.library = library
         self.transport = transport; self.base = base; self.deviceName = deviceName; self.platform = platform
+        self.viewers = viewers
     }
+
+    /// Who's watching (Viewers.swift): a per-profile key goes up and comes down under the profile's own name.
+    let viewers: Viewers?
+    private func wire(_ key: String) -> String { viewers?.key(key) ?? key }
 
     public func setHandlers(onApplied: (@Sendable (Set<String>) -> Void)?, onSignedOut: (@Sendable () -> Void)?, onProfile: (@Sendable (Profile?) -> Void)?) {
         self.onApplied = onApplied; self.onSignedOut = onSignedOut; self.onProfile = onProfile
@@ -261,7 +266,7 @@ public actor Cloud {
     public func noteChanged(_ key: String) {
         guard linked, !applying else { return }
         changes[key, default: 0] += 1
-        var d = store.object("cloud_dirty"); d[key] = 1
+        var d = store.object("cloud_dirty"); d[wire(key)] = 1
         store.setObject("cloud_dirty", d)
         pushTasks[key]?.cancel()
         let wait: UInt64 = key == "progress" ? 20_000_000_000 : 2_000_000_000   // progress churns every few seconds
@@ -277,8 +282,20 @@ public actor Cloud {
     public func flush() async {
         guard linked else { return }
         let session = generation
-        for k in store.object("cloud_dirty").keys {
+        for wk in store.object("cloud_dirty").keys {
             guard current(session) else { return }
+            let k = wk.hasSuffix("_b") ? String(wk.dropLast(2)) : wk
+            guard wire(k) == wk else { continue }      // the other profile's: it goes up when that profile is on
+            pushTasks[k]?.cancel()
+            await pushKey(k, session: session)
+        }
+    }
+
+    /// Before a switch of profile: this profile's history goes up under its own names now.
+    public func flushProfile() async {
+        guard linked else { return }
+        let session = generation
+        for k in ["progress", "library"] where store.object("cloud_dirty")[wire(k)] != nil {
             pushTasks[k]?.cancel()
             await pushKey(k, session: session)
         }
@@ -298,27 +315,29 @@ public actor Cloud {
     }
 
     private func pushDocument(_ key: String, session: UInt64) async {
+        let wk = wire(key)
         guard current(session), linked,
               let keys = (try? await api("GET", "/v1/kv"))?.obj("keys"), current(session) else { return }
-        if let meta = keys.obj(key), store.object("cloud_revs").optInt(key) != meta.int("rev") {
-            guard let rec = try? await api("GET", "/v1/kv/\(key)"), current(session),
+        if let meta = keys.obj(wk), store.object("cloud_revs").optInt(wk) != meta.int("rev") {
+            guard let rec = try? await api("GET", "/v1/kv/\(wk)"), current(session), wire(key) == wk,
                   let remote = JSON.object(rec.str("v")) else { return }
             applying = true
             let (changed, _) = merge(key, remote)
             applying = false
-            var revs = store.object("cloud_revs"); revs[key] = rec.int("rev")
+            var revs = store.object("cloud_revs"); revs[wk] = rec.int("rev")
             store.setObject("cloud_revs", revs)
             if changed { onApplied?([key]) }
         }
         let seen = changes[key, default: 0]
-        guard current(session), let v = docFor(key) else { return }
+        // the doc and the name it goes under belong to one profile: a switch in between sends nothing
+        guard current(session), wire(key) == wk, let v = docFor(key) else { return }
         // Fetch/merge narrows the race; only a server-side conditional PUT can make it atomic.
-        guard let r = try? await api("PUT", "/v1/kv/\(key)", ["v": v]), current(session) else { return }
-        var revs = store.object("cloud_revs"); revs[key] = r.int("rev")
+        guard let r = try? await api("PUT", "/v1/kv/\(wk)", ["v": v]), current(session) else { return }
+        var revs = store.object("cloud_revs"); revs[wk] = r.int("rev")
         store.setObject("cloud_revs", revs)
         // the actor let other calls in during the PUT: a change made then is still unsent
         guard changes[key, default: 0] == seen else { return }
-        var d = store.object("cloud_dirty"); d[key] = nil
+        var d = store.object("cloud_dirty"); d[wk] = nil
         store.setObject("cloud_dirty", d)
     }
 
@@ -329,6 +348,7 @@ public actor Cloud {
         case "library": return !library.doc().isEmpty
         case "sub_style": return store.object("sub_style").int64("at") > 0
         case "seekr": return store.object("seekr_v1").int64("at") > 0
+        case "viewers": return (viewers?.doc().int64("at") ?? 0) > 0
         default: return false
         }
     }
@@ -345,20 +365,21 @@ public actor Cloud {
         guard let keys = (try? await api("GET", "/v1/kv"))?.obj("keys"), current(session) else { return }
         for key in Cloud.syncKeys {
             guard current(session) else { return }
-            guard let meta = keys.obj(key) else {
+            let wk = wire(key)                              // this profile's copy of a per-profile key
+            guard let meta = keys.obj(wk) else {
                 if hasContent(key) { await pushKey(key, session: session) }
                 continue
             }
-            if store.object("cloud_revs").optInt(key) == meta.int("rev") {
-                if store.object("cloud_dirty")[key] != nil { await pushKey(key, session: session) }
+            if store.object("cloud_revs").optInt(wk) == meta.int("rev") {
+                if store.object("cloud_dirty")[wk] != nil { await pushKey(key, session: session) }
                 continue
             }
-            guard let rec = try? await api("GET", "/v1/kv/\(key)"), current(session),
+            guard let rec = try? await api("GET", "/v1/kv/\(wk)"), current(session), wire(key) == wk,
                   let remote = JSON.object(rec.str("v")) else { continue }
             applying = true
             let (changed, localNewer) = merge(key, remote)
             applying = false
-            var revs = store.object("cloud_revs"); revs[key] = rec.int("rev")
+            var revs = store.object("cloud_revs"); revs[wk] = rec.int("rev")
             store.setObject("cloud_revs", revs)
             if changed { applied.insert(key) }
             if localNewer { await pushKey(key, session: session) }
@@ -373,6 +394,7 @@ public actor Cloud {
         case "library": return mergeLibrary(remote)
         case "sub_style": return mergeSubStyle(remote)
         case "seekr": return mergeSeekr(remote)
+        case "viewers": return viewers?.merge(remote) ?? (false, false)
         default: return (false, false)
         }
     }
@@ -405,6 +427,7 @@ public actor Cloud {
         case "seekr":
             let l = store.object("seekr_v1")
             return JSON.text(["key": l.str("key"), "at": l.int64("at")] as JSONObject)
+        case "viewers": return viewers.map { JSON.text($0.doc()) }
         default: return nil
         }
     }

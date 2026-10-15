@@ -92,6 +92,12 @@ final class AppModel: ObservableObject {
     let prefs: Prefs
     let stremio: Stremio
     let cloud: Cloud
+    /// Who's watching (Viewers.swift): up to two profiles on the account, each with its own history.
+    let viewers: Viewers
+    @Published var viewerList: [Viewer] = []
+    @Published var viewerId = "a"
+    /// At launch with two profiles: the picker is up until one is chosen.
+    @Published var askingWho = false
 
     @Published var tab: Tab = .home
     @Published var path: [Route] = []
@@ -159,10 +165,17 @@ final class AppModel: ObservableObject {
         addonStore = AddonStore(store: store)
         progress = ProgressStore(store: store)
         library = LibraryStore(store: store)
+        viewers = Viewers(store: store)
+        progress.viewers = viewers
+        library.viewers = viewers
         prefs = Prefs(store: store)
         stremio = Stremio()
         cloud = Cloud(store: store, addons: addonStore, progress: progress, library: library,
-                      deviceName: Platform.deviceName, platform: Platform.client)
+                      deviceName: Platform.deviceName, platform: Platform.client, viewers: viewers)
+        if viewers.current == "b" && viewers.list().count < 2 { viewers.setCurrent("a") }
+        viewerList = viewers.list()
+        viewerId = viewers.current
+        askingWho = live && viewerList.count == 2
         accentHex = prefs.accent
         addonStore.seedIfNeeded()
         addons = addonStore.all()
@@ -385,6 +398,63 @@ final class AppModel: ObservableObject {
         if keys.contains("addons") { addons = addonStore.all(); manifestCache.removeAll(); manifestMisses.removeAll(); invalidateHome() }
         if keys.contains("progress") { progressChanged() }
         if keys.contains("library") { libraryVersion += 1 }
+        if keys.contains("viewers") {
+            // the list changed elsewhere; a second profile removed there sends this device back to the first
+            let was = viewerId
+            refreshViewers()
+            if viewerId != was { progress.reset(); library.reset(); progressChanged(); libraryVersion += 1 }
+        }
+    }
+
+    // MARK: who's watching
+
+    func refreshViewers() {
+        viewerList = viewers.list(); viewerId = viewers.current
+        if viewerList.count < 2 { askingWho = false }
+    }
+    func viewerName(_ v: Viewer) -> String {
+        let n = v.name.trimmingCharacters(in: .whitespaces)
+        if !n.isEmpty { return n }
+        if v.id == "b" { return "Profile 2" }
+        if let p = profile, !p.name.isEmpty { return p.name }
+        return "You"
+    }
+    func viewerAvatar(_ v: Viewer) -> String { v.id == "b" ? (v.av.isEmpty ? "#0A84FF" : v.av) : (profile?.avatar ?? "#636366") }
+    var viewerNow: Viewer { viewerList.first { $0.id == viewerId } ?? Viewer(id: "a", name: "", av: "") }
+
+    /// On to the other profile: what this one changed goes up under its own names first, then the other's history
+    /// is read and every page showing a history redraws.
+    func switchViewer(_ id: String) {
+        askingWho = false
+        guard id != viewers.current else { return }
+        Task {
+            await cloud.flushProfile()
+            viewers.setCurrent(id)
+            progress.reset(); library.reset()
+            refreshViewers(); progressChanged(); libraryVersion += 1
+            await cloud.pullAll(force: true)
+        }
+    }
+    func addViewer() {
+        guard viewerList.count < 2 else { return }
+        viewers.setList(viewerList + [Viewer(id: "b", name: "", av: "#0A84FF")])
+        Task { await cloud.noteChanged("viewers") }
+        refreshViewers()
+        switchViewer("b")
+        say("Added Profile 2 — it starts with an empty history.")
+    }
+    func renameViewer(_ name: String) {
+        viewers.setList(viewerList.map { $0.id == viewerId ? Viewer(id: $0.id, name: String(name.trimmingCharacters(in: .whitespaces).prefix(24)), av: $0.av) : $0 })
+        Task { await cloud.noteChanged("viewers") }
+        refreshViewers()
+    }
+    func removeSecondViewer() {
+        let list = viewerList.filter { $0.id != "b" }
+        if viewerId == "b" { switchViewer("a") }
+        viewers.setList(list)
+        Task { await cloud.noteChanged("viewers") }
+        refreshViewers()
+        say("Removed the second profile. Its history is kept if you add it again.")
     }
 
     // MARK: synced looks and keys

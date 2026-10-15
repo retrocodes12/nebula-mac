@@ -24,12 +24,19 @@ public final class LibraryStore: @unchecked Sendable {
     private var cache: JSONObject?
     private let lock = NSLock()
 
+    /// Whose list this is (Viewers.swift): the second profile's lives under its own name.
+    public var viewers: Viewers?
+
     public init(store: Store) { self.store = store }
+
+    private var storeKey: String { viewers?.key("library") ?? "library" }
+    /// The other profile's list from now on: read again on the next ask.
+    public func reset() { lock.lock(); cache = nil; lock.unlock() }
 
     public func doc() -> JSONObject {
         lock.lock(); defer { lock.unlock() }
         if let c = cache { return c }
-        let o = store.object("library")
+        let o = store.object(storeKey)
         cache = o
         return o
     }
@@ -44,7 +51,7 @@ public final class LibraryStore: @unchecked Sendable {
         let changed = body(&o)
         if changed {
             lock.lock(); cache = o; lock.unlock()
-            store.setObject("library", o)
+            store.setObject(storeKey, o)
         }
         writeLock.unlock()
         if changed && notify { onChange?() }

@@ -64,6 +64,8 @@ struct RootView: View {
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
                 .allowsHitTesting(false)
             }
+            // two profiles on the account: who's watching? (at launch, over everything)
+            if model.askingWho { WhoPicker().transition(.opacity) }
         }
         .animation(.easeOut(duration: 0.2), value: model.toast)
         .animation(.easeOut(duration: 0.2), value: model.player?.id)
