@@ -172,15 +172,16 @@ final class AppModel: ObservableObject {
         stremio = Stremio()
         cloud = Cloud(store: store, addons: addonStore, progress: progress, library: library,
                       deviceName: Platform.deviceName, platform: Platform.client, viewers: viewers)
-        if viewers.current == "b" && viewers.list().count < 2 { viewers.setCurrent("a") }
-        viewerList = viewers.list()
-        viewerId = viewers.current
-        askingWho = live && viewerList.count == 2
         accentHex = prefs.accent
         addonStore.seedIfNeeded()
         addons = addonStore.all()
         profile = cloud.storedProfile()
         support = cloud.storedSupport()
+        // who's watching: this device's profile, and whether to ask at launch
+        if viewers.current == "b" && viewers.list().count < 2 { viewers.setCurrent("a") }
+        viewerList = viewers.list()
+        viewerId = viewers.current
+        askingWho = live && viewerList.count == 2
 
         let addonsRef = self.addonStore, cloud = self.cloud
         progress.disabledAddons = { Set(addonsRef.all().filter { !$0.enabled }.map(\.manifestUrl)) }
