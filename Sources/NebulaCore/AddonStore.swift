@@ -22,14 +22,44 @@ public final class AddonStore: @unchecked Sendable {
     var listKey: String { viewers?.key("addons") ?? "addons" }
     var syncKey: String { viewers?.key("addons_sync") ?? "addons_sync" }
 
-    /// The first time the second profile is used on this device it starts as a COPY of the first's add-ons — the list
-    /// and its stamps as they are, never "now", so a removal synced from another device's copy still wins the merge.
+    /// The first time the second profile is used on this device it needs a list of its own. Signed in, the cloud
+    /// decides (`Cloud.prepareAddons`): its own "addons_b" when it has one, else a copy of the first profile's — so
+    /// until it has answered, the second profile reads as empty and nothing is written. Signed out, it starts as the
+    /// copy at once.
     private func ensureProfile() {
         guard listKey != "addons" else { return }
         lock.lock(); defer { lock.unlock() }
         guard store.string(listKey) == nil else { return }
-        store.setObject(syncKey, store.object("addons_sync"))
-        store.setObject(listKey, store.object("addons"))
+        let c = store.object("cloud_link")
+        guard c.str("gid").isEmpty || c.str("token").isEmpty else { return }
+        copyFirst()
+    }
+
+    /// The first profile's list and its stamps as they are — never "now", so a removal synced from another device's
+    /// copy still wins the merge. The first profile with nothing gives an empty second.
+    private func copyFirst() {
+        store.setObject(syncKey(for: "b"), store.object("addons_sync"))
+        store.setObject(listKey(for: "b"), store.object("addons"))
+    }
+    private func listKey(for viewer: String) -> String { Viewers.key("addons", viewer: viewer) }
+    private func syncKey(for viewer: String) -> String { Viewers.key("addons_sync", viewer: viewer) }
+
+    /// Whether this device holds that profile's own list (the first profile's always counts).
+    public func hasList(for viewer: String) -> Bool { viewer != "b" || store.string(listKey(for: viewer)) != nil }
+
+    /// The second profile's first list on this device: a copy of the first's, or empty with no stamps (the cloud's
+    /// copy is adopted by the pull). Nothing when it already has one. True when it wrote. No `onChange`: the pull
+    /// that follows sends a copy up itself, and must not send an empty list over the cloud's.
+    @discardableResult
+    public func startList(for viewer: String, copyingFirst: Bool) -> Bool {
+        locked {
+            guard !hasList(for: viewer) else { return false }
+            if copyingFirst { copyFirst() } else {
+                store.setObject(syncKey(for: viewer), [:])
+                store.setObject(listKey(for: viewer), ["list": [Any]()])
+            }
+            return true
+        }
     }
 
     /// The stamps written back (a sync merge, a push stamping an unstamped add-on).

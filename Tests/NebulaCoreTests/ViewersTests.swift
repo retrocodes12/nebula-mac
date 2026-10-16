@@ -101,4 +101,74 @@ final class ViewersTests: XCTestCase {
         XCTAssertEqual(v.list().count, 1)
         XCTAssertEqual(v.current, "a")
     }
+
+    // MARK: signed in: the cloud decides the second profile's first list
+
+    private func linkedDevice(_ server: FakeCloud) -> (Store, Viewers, AddonStore, Cloud) {
+        let s = store(), v = Viewers(store: s), a = AddonStore(store: s)
+        a.viewers = v
+        server.tokens.insert("tok0")
+        s.setObject("cloud_link", ["gid": "g1", "token": "tok0"])
+        let cloud = Cloud(store: s, addons: a, progress: ProgressStore(store: s), library: LibraryStore(store: s),
+                          transport: server, base: "https://c.test/cloud", viewers: v)
+        return (s, v, a, cloud)
+    }
+    private let x = Addon(manifestUrl: "https://x.example/manifest.json", name: "X", base: "https://x.example")
+    private let z = "https://z.example/manifest.json"
+
+    func testTheCloudsOwnSecondProfileListIsTakenAsItIs() async {
+        let server = FakeCloud()
+        let doc: JSONObject = ["list": [z: ["name": "Z", "base": "https://z.example", "at": 5] as JSONObject] as JSONObject,
+                               "removed": [x.manifestUrl: 7] as JSONObject, "order": [z], "orderAt": 6]
+        server.kv["addons_b"] = (JSON.text(doc), 3)
+        let (s, v, a, cloud) = linkedDevice(server)
+        a.add(x)
+        s.setObject("cloud_revs", ["addons_b": 3])      // a stale memory of it must not skip the fetch
+        await cloud.prepareAddons(for: "b")
+        XCTAssertEqual(s.object("addons_b").arr("list").count, 0, "empty, not a copy of the first profile")
+        v.setCurrent("b")
+        await cloud.pullAll(force: true)
+        XCTAssertEqual(a.all().map(\.manifestUrl), [z], "the cloud's list, without the first profile's X")
+        XCTAssertNotNil(a.syncDoc().obj("removed")?[x.manifestUrl])
+        v.setCurrent("a")
+        XCTAssertEqual(a.all().map(\.manifestUrl), [x.manifestUrl])
+    }
+
+    func testWithNoCloudCopyTheSecondProfileStartsAsTheFirstsAndGoesUp() async {
+        let server = FakeCloud()
+        let (s, v, a, cloud) = linkedDevice(server)
+        a.add(x)
+        let stamp = s.object("addons_sync").obj("at")?.int64(x.manifestUrl) ?? 0
+        await cloud.prepareAddons(for: "b")
+        v.setCurrent("b")
+        XCTAssertEqual(a.all().map(\.manifestUrl), [x.manifestUrl])
+        await cloud.pullAll(force: true)
+        let up = JSON.object(server.kv["addons_b"]?.v ?? "") ?? [:]
+        XCTAssertEqual(up.obj("list")?.obj(x.manifestUrl)?.int64("at"), stamp, "sent up with the first profile's own stamp")
+        XCTAssertNil(server.kv["addons"], "the first profile's copy untouched")
+    }
+
+    func testSignedInTheSecondProfileWaitsForTheCloudThenTheLaunchPullDecides() async {
+        let server = FakeCloud()
+        let doc: JSONObject = ["list": [z: ["name": "Z", "base": "https://z.example", "at": 5] as JSONObject] as JSONObject,
+                               "removed": JSONObject(), "order": [z], "orderAt": 6]
+        server.kv["addons_b"] = (JSON.text(doc), 1)
+        let (s, v, a, cloud) = linkedDevice(server)
+        a.add(x)
+        v.setCurrent("b")                                 // a device already on the second profile (0.5.x: shared add-ons)
+        XCTAssertTrue(a.all().isEmpty)
+        XCTAssertNil(s.string("addons_b"), "nothing written before the cloud answers")
+        await cloud.pullAll(force: true)
+        XCTAssertEqual(a.all().map(\.manifestUrl), [z])
+    }
+
+    func testTheCloudNotAnsweringFallsBackToTheCopy() async {
+        let server = FakeCloud()
+        let (_, v, a, cloud) = linkedDevice(server)
+        a.add(x)
+        server.tokens.removeAll()                         // every signed call refused
+        await cloud.prepareAddons(for: "b")
+        v.setCurrent("b")
+        XCTAssertEqual(a.all().map(\.manifestUrl), [x.manifestUrl])
+    }
 }

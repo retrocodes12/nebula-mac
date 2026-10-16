@@ -362,7 +362,14 @@ public actor Cloud {
         if !force && now - lastPullAt < 45_000 { return }
         lastPullAt = now
         var applied = Set<String>()
-        guard let keys = (try? await api("GET", "/v1/kv"))?.obj("keys"), current(session) else { return }
+        let got = (try? await api("GET", "/v1/kv"))?.obj("keys")
+        guard current(session) else { return }
+        // the second profile's first list on this device is decided before anything is merged into it
+        if let v = viewers, startAddons(for: v.current, keys: got) { applied.insert("addons") }
+        guard let keys = got else {
+            if !applied.isEmpty { onApplied?(applied) }
+            return
+        }
         for key in Cloud.syncKeys {
             guard current(session) else { return }
             let wk = wire(key)                              // this profile's copy of a per-profile key
@@ -385,6 +392,32 @@ public actor Cloud {
             if localNewer { await pushKey(key, session: session) }
         }
         if current(session), !applied.isEmpty { onApplied?(applied) }
+    }
+
+    /// Who's watching: the first time the second profile is used on this device. When the cloud already holds its
+    /// add-ons ("addons_b"), it starts empty and the pull adopts the cloud's list as it is; when the cloud has none —
+    /// or this device is signed out, or the cloud did not answer — it starts as a copy of the first profile's.
+    /// Call before the device moves onto that profile, so nothing reads it first.
+    public func prepareAddons(for viewer: String) async {
+        guard !addons.hasList(for: viewer) else { return }
+        let session = generation
+        let keys = linked ? (try? await api("GET", "/v1/kv"))?.obj("keys") : nil
+        guard session == generation else { return }
+        _ = startAddons(for: viewer, keys: keys)
+    }
+
+    /// `keys`: the cloud's key list, or nil when there is none to go by. True when the list was started.
+    private func startAddons(for viewer: String, keys: JSONObject?) -> Bool {
+        guard !addons.hasList(for: viewer) else { return false }
+        let wk = Viewers.key("addons", viewer: viewer)
+        let cloudHas = keys?.obj(wk) != nil
+        guard addons.startList(for: viewer, copyingFirst: !cloudHas) else { return false }
+        if cloudHas {
+            // fetch the cloud's copy whatever this device last remembered of it
+            var revs = store.object("cloud_revs"); revs[wk] = nil
+            store.setObject("cloud_revs", revs)
+        }
+        return true
     }
 
     func merge(_ key: String, _ remote: JSONObject) -> (changed: Bool, localNewer: Bool) {

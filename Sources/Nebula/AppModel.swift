@@ -437,6 +437,8 @@ final class AppModel: ObservableObject {
         guard id != viewers.current else { return }
         Task {
             await cloud.flushProfile()
+            // the second profile's first add-ons on this device: the cloud's copy, or the first profile's
+            await cloud.prepareAddons(for: id)
             viewers.setCurrent(id)
             progress.reset(); library.reset()
             refreshViewers(); progressChanged(); libraryVersion += 1
