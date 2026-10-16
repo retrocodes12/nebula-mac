@@ -1,5 +1,7 @@
 Nebula for Mac and iPhone — native Swift apps (SwiftUI, libmpv engine). macOS 13 or later on Apple silicon and Intel; iOS 16 or later, iPad included.
 
+**New in 0.6.0** — each who's-watching profile now keeps its own add-ons. The second starts from a copy of the first's, or from the list it already has on your account; settings stay shared.
+
 **New in 0.5.1** — who's watching has a new look: big round profiles with their names, and Manage Profiles to edit a profile's name and colour, add a second profile or remove it. Settings › Who's watching opens the same picker.
 
 **New in 0.5.0** — who's watching: an account can hold two profiles, each with its own Continue Watching, resume points and My List; add-ons and settings stay shared. Add one in Settings › Who's watching; with two, Nebula asks who's watching when it opens.
