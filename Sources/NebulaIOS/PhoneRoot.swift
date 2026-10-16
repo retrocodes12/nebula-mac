@@ -98,7 +98,7 @@ struct PhoneRoot: View {
         }
         // two profiles on the account: who's watching? (at launch, over everything but the toasts)
         .overlay {
-            if model.askingWho { WhoPicker().transition(.opacity) }
+            if model.askingWho || model.whoOpen { WhoPicker().transition(.opacity) }
         }
         // over the player too: a toast said under it ("Added to My List", a sign-out) went unseen
         .overlay {

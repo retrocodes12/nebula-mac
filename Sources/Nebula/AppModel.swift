@@ -98,6 +98,8 @@ final class AppModel: ObservableObject {
     @Published var viewerId = "a"
     /// At launch with two profiles: the picker is up until one is chosen.
     @Published var askingWho = false
+    /// The picker opened from Settings (switch, add, edit), with one profile too.
+    @Published var whoOpen = false
 
     @Published var tab: Tab = .home
     @Published var path: [Route] = []
@@ -420,13 +422,17 @@ final class AppModel: ObservableObject {
         if let p = profile, !p.name.isEmpty { return p.name }
         return "You"
     }
-    func viewerAvatar(_ v: Viewer) -> String { v.id == "b" ? (v.av.isEmpty ? "#0A84FF" : v.av) : (profile?.avatar ?? "#636366") }
+    /// The first profile wears the account's colour until it is given one of its own (the picker's editor).
+    func viewerAvatar(_ v: Viewer) -> String {
+        if v.av.range(of: "^#[0-9A-Fa-f]{6}$", options: .regularExpression) != nil { return v.av }
+        return v.id == "b" ? "#0A84FF" : (profile?.avatar ?? "#636366")
+    }
     var viewerNow: Viewer { viewerList.first { $0.id == viewerId } ?? Viewer(id: "a", name: "", av: "") }
 
     /// On to the other profile: what this one changed goes up under its own names first, then the other's history
     /// is read and every page showing a history redraws.
     func switchViewer(_ id: String) {
-        askingWho = false
+        askingWho = false; whoOpen = false
         guard id != viewers.current else { return }
         Task {
             await cloud.flushProfile()
@@ -444,6 +450,20 @@ final class AppModel: ObservableObject {
         switchViewer("b")
         say("Added Profile 2 — it starts with an empty history.")
     }
+    /// The picker's Add Profile: the second profile, not switched to (it is picked from the picker like the first).
+    func addViewerQuietly() {
+        guard viewerList.count < 2 else { return }
+        viewers.setList(viewerList + [Viewer(id: "b", name: "", av: "#0A84FF")])
+        Task { await cloud.noteChanged("viewers") }
+        refreshViewers()
+    }
+    /// A pencil's Save: that profile's name and colour.
+    func editViewer(_ id: String, name: String, av: String) {
+        viewers.setList(viewerList.map { $0.id == id ? Viewer(id: $0.id, name: String(name.trimmingCharacters(in: .whitespaces).prefix(24)), av: av) : $0 })
+        Task { await cloud.noteChanged("viewers") }
+        refreshViewers()
+    }
+    func closeWho() { askingWho = false; whoOpen = false }
     func renameViewer(_ name: String) {
         viewers.setList(viewerList.map { $0.id == viewerId ? Viewer(id: $0.id, name: String(name.trimmingCharacters(in: .whitespaces).prefix(24)), av: $0.av) : $0 })
         Task { await cloud.noteChanged("viewers") }
