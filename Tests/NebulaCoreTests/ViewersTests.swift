@@ -15,12 +15,64 @@ final class ViewersTests: XCTestCase {
         XCTAssertEqual(Viewers.parse(d).first { $0.id == "b" }?.name, "Kids")
     }
 
-    func testOnlyHistoryMovesForTheSecondProfile() {
+    func testHistoryAndAddonsMoveForTheSecondProfile() {
         XCTAssertEqual(Viewers.key("progress", viewer: "a"), "progress")
         XCTAssertEqual(Viewers.key("progress", viewer: "b"), "progress_b")
         XCTAssertEqual(Viewers.key("library", viewer: "b"), "library_b")
-        XCTAssertEqual(Viewers.key("addons", viewer: "b"), "addons")
+        XCTAssertEqual(Viewers.key("addons", viewer: "a"), "addons")
+        XCTAssertEqual(Viewers.key("addons", viewer: "b"), "addons_b")
+        XCTAssertEqual(Viewers.key("addons_sync", viewer: "b"), "addons_sync_b")
         XCTAssertEqual(Viewers.key("viewers", viewer: "b"), "viewers")
+        XCTAssertEqual(Viewers.key("sub_style", viewer: "b"), "sub_style")
+    }
+
+    func testTheSecondProfileStartsAsACopyOfTheFirstsAddons() {
+        let s = store(), v = Viewers(store: s), a = AddonStore(store: s)
+        a.viewers = v
+        let x = Addon(manifestUrl: "https://x.example/manifest.json", name: "X", base: "https://x.example")
+        let y = Addon(manifestUrl: "https://y.example/manifest.json", name: "Y", base: "https://y.example")
+        a.add(x); a.add(y); a.remove(y.manifestUrl); a.add(y); a.move(y.manifestUrl, by: -1)
+        let firstSync = s.object("addons_sync")
+        v.setCurrent("b")
+        XCTAssertEqual(a.all().map(\.manifestUrl), [y.manifestUrl, x.manifestUrl], "a copy, in the first profile's order")
+        // the stamps are the first profile's own, not the moment of the copy
+        XCTAssertEqual(a.syncDoc().obj("at")?.int64(x.manifestUrl), firstSync.obj("at")?.int64(x.manifestUrl))
+        XCTAssertEqual(a.syncDoc().int64("orderAt"), firstSync.int64("orderAt"))
+        // from here each keeps its own
+        a.remove(x.manifestUrl)
+        XCTAssertEqual(a.all().map(\.manifestUrl), [y.manifestUrl])
+        XCTAssertNotNil(s.object("addons_sync_b").obj("removed")?[x.manifestUrl])
+        v.setCurrent("a")
+        XCTAssertEqual(a.all().map(\.manifestUrl), [y.manifestUrl, x.manifestUrl])
+        XCTAssertNil(s.object("addons_sync").obj("removed")?[x.manifestUrl])
+        // the copy is made once: a list the second profile emptied stays empty
+        v.setCurrent("b"); a.remove(y.manifestUrl)
+        XCTAssertTrue(a.all().isEmpty)
+    }
+
+    func testAnEmptyFirstProfileGivesAnEmptySecond() {
+        let s = store(), v = Viewers(store: s), a = AddonStore(store: s)
+        a.viewers = v
+        v.setCurrent("b")
+        XCTAssertTrue(a.all().isEmpty)
+        XCTAssertNotNil(s.string("addons_b"))
+    }
+
+    func testANewerRemovalFromAnotherDeviceBeatsTheCopy() async {
+        let s = store(), v = Viewers(store: s), a = AddonStore(store: s)
+        a.viewers = v
+        let x = Addon(manifestUrl: "https://x.example/manifest.json", name: "X", base: "https://x.example")
+        a.add(x)
+        let added = s.object("addons_sync").obj("at")?.int64(x.manifestUrl) ?? 0
+        v.setCurrent("b")
+        let cloud = Cloud(store: s, addons: a, progress: ProgressStore(store: s), library: LibraryStore(store: s), viewers: v)
+        // another device's second profile removed X after the first profile added it
+        let remote: JSONObject = ["list": JSONObject(), "removed": [x.manifestUrl: added + 5_000] as JSONObject, "order": [String](), "orderAt": 0]
+        let r = await cloud.merge("addons", remote)
+        XCTAssertTrue(r.changed)
+        XCTAssertTrue(a.all().isEmpty, "the removal wins over the copy's older stamp")
+        v.setCurrent("a")
+        XCTAssertEqual(a.all().map(\.manifestUrl), [x.manifestUrl], "the first profile keeps it")
     }
 
     func testEachProfileReadsAndWritesItsOwnHistory() {

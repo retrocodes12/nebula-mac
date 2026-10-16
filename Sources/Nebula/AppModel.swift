@@ -170,6 +170,8 @@ final class AppModel: ObservableObject {
         viewers = Viewers(store: store)
         progress.viewers = viewers
         library.viewers = viewers
+        addonStore.viewers = viewers
+        if viewers.current == "b" && viewers.list().count < 2 { viewers.setCurrent("a") }
         prefs = Prefs(store: store)
         stremio = Stremio()
         cloud = Cloud(store: store, addons: addonStore, progress: progress, library: library,
@@ -180,7 +182,6 @@ final class AppModel: ObservableObject {
         profile = cloud.storedProfile()
         support = cloud.storedSupport()
         // who's watching: this device's profile, and whether to ask at launch
-        if viewers.current == "b" && viewers.list().count < 2 { viewers.setCurrent("a") }
         viewerList = viewers.list()
         viewerId = viewers.current
         askingWho = live && viewerList.count == 2
@@ -405,7 +406,7 @@ final class AppModel: ObservableObject {
             // the list changed elsewhere; a second profile removed there sends this device back to the first
             let was = viewerId
             refreshViewers()
-            if viewerId != was { progress.reset(); library.reset(); progressChanged(); libraryVersion += 1 }
+            if viewerId != was { progress.reset(); library.reset(); progressChanged(); libraryVersion += 1; addonsSwitched() }
         }
     }
 
@@ -439,8 +440,16 @@ final class AppModel: ObservableObject {
             viewers.setCurrent(id)
             progress.reset(); library.reset()
             refreshViewers(); progressChanged(); libraryVersion += 1
+            addonsSwitched()
             await cloud.pullAll(force: true)
         }
+    }
+    /// Each profile keeps its own add-ons: after a switch everything built from the list reads the new one —
+    /// the Add-ons page, Home's rows, Search and Discover, stream lists. (Manifests are cached by address, so they stay.)
+    private func addonsSwitched() {
+        addons = addonStore.all()
+        catalogEpoch += 1
+        invalidateHome()
     }
     func addViewer() {
         guard viewerList.count < 2 else { return }
@@ -475,7 +484,7 @@ final class AppModel: ObservableObject {
         viewers.setList(list)
         Task { await cloud.noteChanged("viewers") }
         refreshViewers()
-        say("Removed the second profile. Its history is kept if you add it again.")
+        say("Removed the second profile. Its history and add-ons are kept if you add it again.")
     }
 
     // MARK: synced looks and keys

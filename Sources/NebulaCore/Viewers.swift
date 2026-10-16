@@ -9,12 +9,12 @@ public struct Viewer: Equatable, Identifiable, Sendable {
 }
 
 /// Who's watching (0.5.0; the shared player's `viewers`, the same wire). An account holds up to two profiles. Each keeps
-/// its own watch history — Continue Watching, resume points, ticks, My List; add-ons and settings stay the account's.
-/// The first profile's history IS the account's history as it always was ("progress", "library"), so nothing moves for
-/// anyone; the second's sits beside it ("progress_b", "library_b") on this device and in the cloud. The list is synced
+/// its own watch history — Continue Watching, resume points, ticks, My List — and its own add-ons; settings stay the
+/// account's. The first profile's IS the account's as it always was ("progress", "library", "addons"), so nothing moves
+/// for anyone; the second's sits beside it ("progress_b", "library_b", "addons_b") on this device and in the cloud. The list is synced
 /// (`viewers`: {at, list:[{id, name, av}]}, newest wins); which profile this device is on is not.
 public final class Viewers: @unchecked Sendable {
-    static let perProfile: Set<String> = ["progress", "library"]
+    static let perProfile: Set<String> = ["progress", "library", "addons", "addons_sync"]
     let store: Store
 
     public init(store: Store) { self.store = store }

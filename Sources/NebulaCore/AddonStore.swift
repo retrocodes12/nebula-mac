@@ -15,6 +15,26 @@ public final class AddonStore: @unchecked Sendable {
 
     public init(store: Store) { self.store = store }
 
+    /// Who's watching: each profile keeps its own add-ons. The first profile's are the old documents ("addons",
+    /// "addons_sync"); the second's sit beside them ("addons_b", "addons_sync_b"). Switching profile needs no reset —
+    /// every read goes to the store under the profile this device is on.
+    public var viewers: Viewers?
+    var listKey: String { viewers?.key("addons") ?? "addons" }
+    var syncKey: String { viewers?.key("addons_sync") ?? "addons_sync" }
+
+    /// The first time the second profile is used on this device it starts as a COPY of the first's add-ons — the list
+    /// and its stamps as they are, never "now", so a removal synced from another device's copy still wins the merge.
+    private func ensureProfile() {
+        guard listKey != "addons" else { return }
+        lock.lock(); defer { lock.unlock() }
+        guard store.string(listKey) == nil else { return }
+        store.setObject(syncKey, store.object("addons_sync"))
+        store.setObject(listKey, store.object("addons"))
+    }
+
+    /// The stamps written back (a sync merge, a push stamping an unstamped add-on).
+    func saveSync(_ s: JSONObject) { locked { ensureProfile(); store.setObject(syncKey, s) } }
+
     /// Run `body` with the add-on documents to itself.
     public func locked<T>(_ body: () throws -> T) rethrows -> T {
         lock.lock(); defer { lock.unlock() }
@@ -22,7 +42,8 @@ public final class AddonStore: @unchecked Sendable {
     }
 
     public func all() -> [Addon] {
-        let doc = store.object("addons")
+        ensureProfile()
+        let doc = store.object(listKey)
         var seen = Set<String>()
         return doc.objs("list").compactMap { o in
             guard let u = o.text("manifestUrl"), seen.insert(u).inserted else { return nil }
@@ -36,11 +57,12 @@ public final class AddonStore: @unchecked Sendable {
     /// Write the list without touching the sync stamps (a merge, a seed).
     public func saveRaw(_ list: [Addon]) {
         locked {
+            ensureProfile()
             var seen = Set<String>()
             let arr: [JSONObject] = list.filter { seen.insert($0.manifestUrl).inserted }.map {
                 ["manifestUrl": $0.manifestUrl, "name": $0.name, "base": $0.base, "logo": $0.logo ?? "", "enabled": $0.enabled]
             }
-            store.setObject("addons", ["list": arr])
+            store.setObject(listKey, ["list": arr])
         }
     }
 
@@ -50,7 +72,7 @@ public final class AddonStore: @unchecked Sendable {
         let changed = locked {
             var list = all(), s = syncDoc()
             guard body(&list, &s) else { return false }
-            store.setObject("addons_sync", s)
+            saveSync(s)
             saveRaw(list)
             return true
         }
@@ -103,7 +125,8 @@ public final class AddonStore: @unchecked Sendable {
     }
 
     public func syncDoc() -> JSONObject {
-        var s = store.object("addons_sync")
+        ensureProfile()
+        var s = store.object(syncKey)
         if s["at"] == nil { s["at"] = JSONObject() }
         if s["removed"] == nil { s["removed"] = JSONObject() }
         return s
@@ -125,6 +148,6 @@ public final class AddonStore: @unchecked Sendable {
         at[AddonStore.cinemeta.manifestUrl] = 1
         at[AddonStore.openSubtitles.manifestUrl] = 1
         s["at"] = at
-        store.setObject("addons_sync", s)
+        saveSync(s)
     }
 }

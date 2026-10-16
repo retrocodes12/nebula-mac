@@ -291,11 +291,11 @@ public actor Cloud {
         }
     }
 
-    /// Before a switch of profile: this profile's history goes up under its own names now.
+    /// Before a switch of profile: this profile's history and add-ons go up under their own names now.
     public func flushProfile() async {
         guard linked else { return }
         let session = generation
-        for k in ["progress", "library"] where store.object("cloud_dirty")[wire(k)] != nil {
+        for k in ["addons", "progress", "library"] where store.object("cloud_dirty")[wire(k)] != nil {
             pushTasks[k]?.cancel()
             await pushKey(k, session: session)
         }
@@ -415,7 +415,7 @@ public actor Cloud {
                     if at.int64(a.manifestUrl) == 0 { at[a.manifestUrl] = nowMs(); stamped = true }
                     list[a.manifestUrl] = ["name": a.name, "base": a.base, "logo": a.logo ?? "", "at": at.int64(a.manifestUrl)] as JSONObject
                 }
-                if stamped { s["at"] = at; store.setObject("addons_sync", s) }
+                if stamped { s["at"] = at; addons.saveSync(s) }
                 // the list is keyed by address and carries no order of its own — rank travels beside it
                 return JSON.text(["list": list, "removed": s.obj("removed") ?? [:], "order": all.map(\.manifestUrl), "orderAt": s.int64("orderAt")] as JSONObject)
             }
@@ -490,7 +490,7 @@ public actor Cloud {
             if next != arr { arr = next; changed = true }
         } else if s.int64("orderAt") > roAt { localNewer = true }
         s["at"] = at; s["removed"] = removed
-        store.setObject("addons_sync", s)
+        addons.saveSync(s)
         if changed { addons.saveRaw(arr) }
         return (changed, localNewer)
     }

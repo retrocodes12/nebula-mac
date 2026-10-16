@@ -124,7 +124,7 @@ struct WhoMonogram: View {
     }
 }
 
-/// A pencil pressed: the profile's name and colour; the second can be removed (its history is kept).
+/// A pencil pressed: the profile's name and colour; the second can be removed (its history and add-ons are kept).
 private struct WhoEditor: View {
     @EnvironmentObject var model: AppModel
     let v: Viewer
@@ -170,7 +170,7 @@ private struct WhoEditor: View {
                     .buttonStyle(.plain)
                     .padding(.top, 18)
                 }
-                Text("Each profile keeps its own Continue Watching, resume points and My List. Add-ons and settings are shared.")
+                Text("Each profile keeps its own Continue Watching, resume points, My List and add-ons. Settings are shared.")
                     .scaledFont(size: 13).foregroundStyle(Theme.label2)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 360)
@@ -194,7 +194,7 @@ struct WhoSettings: View {
             PanelRow(
                 title: "Profiles",
                 detail: (model.viewerList.count < 2 ? "Add a second profile for someone else in the house." : "Watching as \(model.viewerName(model.viewerNow)).")
-                    + " Each profile keeps its own Continue Watching, resume points and My List. Add-ons and settings are shared."
+                    + " Each profile keeps its own Continue Watching, resume points, My List and add-ons. Settings are shared."
             ) {
                 Chip(text: "Who's watching") { model.whoOpen = true }
             }
