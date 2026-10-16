@@ -51,6 +51,8 @@ codesign --verify --deep --strict "$APP"
 
 ( cd dist && ditto -c -k --keepParent Nebula.app Nebula-mac.zip )
 STAGE="$(mktemp -d)"; cp -R "$APP" "$STAGE/"; ln -s /Applications "$STAGE/Applications"
-hdiutil create -volname "Nebula" -srcfolder "$STAGE" -ov -format UDZO dist/Nebula.dmg >/dev/null
+# an explicit size: hdiutil's own guess came out too small on the runner ("No space left on device", 10-16)
+DMG_MB=$(( $(du -sm "$STAGE" | cut -f1) + 60 ))
+hdiutil create -volname "Nebula" -srcfolder "$STAGE" -size "${DMG_MB}m" -ov -format UDZO dist/Nebula.dmg >/dev/null
 lipo -archs "$APP/Contents/MacOS/Nebula"
 ls -la dist
