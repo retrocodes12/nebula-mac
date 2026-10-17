@@ -558,9 +558,10 @@ struct PhonePlayer: View {
         var target = request.target
         target.id = n.id
         target.episode = n
-        let group = request.stream.bingeGroup, origin = request.streamAddon
+        let current = request.stream, origin = request.streamAddon, others = model.activeAddons
         nextTask = Task {
-            let found = await PlaybackRules.nextStream(origin: origin, type: target.type, id: n.id, bingeGroup: group, stremio: model.stremio)
+            let found = await PlaybackRules.nextStream(origin: origin, type: target.type, id: n.id, current: current, others: others,
+                                                       manifest: { [model] a in await model.manifest(for: a, within: 8) }, stremio: model.stremio)
             guard !Task.isCancelled, !finished, model.player?.id == request.id else { return }
             nextBusy = false
             if let f = found {

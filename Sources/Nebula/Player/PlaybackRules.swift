@@ -158,11 +158,48 @@ enum PlaybackRules {
         return r
     }
 
-    /// The same release of the next episode when the add-on offers it, else its first stream.
-    /// Nil means nobody answered — the caller shows the streams page instead.
-    static func nextStream(origin: Addon?, type: String, id: String, bingeGroup: String, stremio: Stremio) async -> (StreamItem, Addon)? {
-        guard let a = origin, let list = try? await stremio.loadStreams(base: a.base, type: type, id: id) else { return nil }
-        guard let s = list.first(where: { !bingeGroup.isEmpty && $0.bingeGroup == bingeGroup }) ?? list.first else { return nil }
-        return (s, a)
+    /// The same release of the next episode: the row naming the same file (episode taken out), else the
+    /// add-on's own binge group, else its first stream. When the playing row named its file and the add-on
+    /// no longer has that release, the other streaming add-ons are asked for it (15 s at most) — the one it
+    /// came from may be down, or may have renamed its group. Nil means nobody answered — the caller shows
+    /// the streams page instead.
+    static func nextStream(origin: Addon?, type: String, id: String, current: StreamItem, others: [Addon] = [],
+                           manifest: @escaping @Sendable (Addon) async -> ManifestInfo? = { _ in nil },
+                           stremio: Stremio) async -> (StreamItem, Addon)? {
+        let file = ReleaseKey.of(current), group = current.bingeGroup
+        var fallback: (StreamItem, Addon)?
+        if let a = origin, let list = try? await stremio.loadStreams(base: a.base, type: type, id: id), !list.isEmpty {
+            if !file.isEmpty, let s = list.first(where: { ReleaseKey.of($0) == file }) { return (s, a) }
+            let s = list.first(where: { !group.isEmpty && $0.bingeGroup == group }) ?? list[0]
+            // a row naming another file is another release: look for this one elsewhere first
+            let other = !file.isEmpty && !ReleaseKey.of(s).isEmpty
+            if file.isEmpty || (!other && !group.isEmpty && s.bingeGroup == group) { return (s, a) }
+            fallback = (s, a)
+        }
+        guard !file.isEmpty else { return fallback }
+        let ask = others.filter { $0.manifestUrl != origin?.manifestUrl }.prefix(8)
+        if ask.isEmpty { return fallback }
+        enum Hit { case found(StreamItem, Addon), none, timeUp }
+        let hit: (StreamItem, Addon)? = await withTaskGroup(of: Hit.self) { g in
+            for o in ask {
+                g.addTask {
+                    guard let m = await manifest(o), m.canStream(type, id),
+                          let list = try? await stremio.loadStreams(base: o.base, type: type, id: id),
+                          let s = list.first(where: { ReleaseKey.of($0) == file }) else { return .none }
+                    return .found(s, o)
+                }
+            }
+            g.addTask { try? await Task.sleep(nanoseconds: 15_000_000_000); return .timeUp }
+            var left = ask.count
+            for await r in g {
+                switch r {
+                case .found(let s, let o): g.cancelAll(); return (s, o)
+                case .timeUp: g.cancelAll(); return nil
+                case .none: left -= 1; if left == 0 { g.cancelAll(); return nil }
+                }
+            }
+            return nil
+        }
+        return hit ?? fallback
     }
 }
