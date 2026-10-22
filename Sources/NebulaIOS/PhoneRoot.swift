@@ -11,6 +11,7 @@ struct PhoneRoot: View {
     /// How far the top page has been pulled to the right by a swipe in from the screen's left
     /// edge — the way back every iPhone app has; the page under it shows as it goes.
     @State private var backDrag: CGFloat = 0
+    @Environment(\.accessibilityReduceMotion) private var reduce
 
     private var pushed: Bool { !model.path.isEmpty }
 
@@ -63,6 +64,8 @@ struct PhoneRoot: View {
                             .allowsHitTesting(i == last)
                             .disabled(!shown)
                             .accessibilityHidden(!shown)
+                            // opened, it slides in from the side; Back sends it out the same way (Motion)
+                            .transition(reduce ? .identity : Motion.pageEdge)
                     }
                     // a soft shade under the status bar, so its clock reads over bright art and
                     // over whatever scrolls up beneath it — no line where the art begins (none in
@@ -78,6 +81,9 @@ struct PhoneRoot: View {
                     }
                     if pushed { edgeSwipe(width: geo.size.width, height: geo.size.height) }
                 }
+                // the page under fades down as one arrives and back up as it leaves; a tab cross-fades
+                .animation(reduce ? nil : Motion.page, value: model.path.count)
+                .animation(reduce ? nil : Motion.tab, value: model.tab)
             }
 
             if !pushed {
@@ -144,8 +150,13 @@ struct PhoneRoot: View {
                         withAnimation(.easeOut(duration: 0.18)) { backDrag = width }
                         Task { @MainActor in
                             try? await Task.sleep(nanoseconds: 180_000_000)
-                            if !model.path.isEmpty { model.path.removeLast() }
-                            backDrag = 0
+                            // already off the screen under the finger: no slide out on top of it, and the
+                            // drag's offset is put back without flying the page home
+                            var quiet = Transaction(); quiet.disablesAnimations = true
+                            withTransaction(quiet) {
+                                if !model.path.isEmpty { model.path.removeLast() }
+                                backDrag = 0
+                            }
                         }
                     }
             )
@@ -223,7 +234,7 @@ struct TabPill: View {
                     .frame(maxWidth: .infinity).frame(height: 52)
                     .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(PressStyle())
             }
         }
         .padding(.horizontal, 4)

@@ -80,14 +80,18 @@ final class ImageLoader: @unchecked Sendable {
 struct RemoteImage<Placeholder: View>: View {
     let url: String?
     var contentMode: ContentMode = .fill
+    /// a title page's backdrop: the picture settles from a little close as it lands (Motion.settle)
+    var settle = false
     @ViewBuilder var placeholder: Placeholder
+    @Environment(\.accessibilityReduceMotion) private var reduce
     /// The picture, and the address it is the picture of.
     @State private var image: PlatformImage?
     @State private var shown: String?
 
-    init(url: String?, contentMode: ContentMode = .fill, @ViewBuilder placeholder: () -> Placeholder) {
+    init(url: String?, contentMode: ContentMode = .fill, settle: Bool = false, @ViewBuilder placeholder: () -> Placeholder) {
         self.url = url
         self.contentMode = contentMode
+        self.settle = settle
         self.placeholder = placeholder()
         // a picture already in memory is there from the first frame: a row scrolled back into
         // view, or a page opened again, no longer flashes its placeholder first
@@ -102,7 +106,8 @@ struct RemoteImage<Placeholder: View>: View {
         let current = shown == url ? image : url.flatMap { ImageLoader.shared.cached($0) }
         ZStack {
             if let img = current {
-                Image(platform: img).resizable().aspectRatio(contentMode: contentMode).transition(.opacity)
+                Image(platform: img).resizable().aspectRatio(contentMode: contentMode)
+                    .transition(settle && !reduce ? Motion.settle : .opacity)
             } else {
                 placeholder
             }

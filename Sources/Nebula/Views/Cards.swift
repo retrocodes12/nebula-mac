@@ -58,7 +58,7 @@ struct PosterCard: View {
             .animation(.easeOut(duration: 0.16), value: hover)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PressStyle())
         .onHover { hover = $0 }
         .contextMenu { TitleMenu(item: item, addonUrl: addonUrl) }
     }
@@ -186,7 +186,7 @@ struct ContinueCard: View {
             .animation(.easeOut(duration: 0.16), value: hover)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PressStyle())
         .onHover { hover = $0 }
         .contextMenu {
             Button("Details") { model.open(seriesItem, addonUrl: rec.addonUrl) }

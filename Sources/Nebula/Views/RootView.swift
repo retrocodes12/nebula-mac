@@ -6,6 +6,7 @@ struct RootView: View {
     @EnvironmentObject var model: AppModel
     /// Esc on a pushed page goes Back (B5).
     @State private var escMonitor: Any?
+    @Environment(\.accessibilityReduceMotion) private var reduce
 
     var body: some View {
         ZStack {
@@ -34,8 +35,13 @@ struct RootView: View {
                             .allowsHitTesting(shown)
                             .disabled(!shown)
                             .accessibilityHidden(!shown)
+                            // opened, it slides in from the side; Back sends it out the same way (Motion)
+                            .transition(reduce ? .identity : Motion.pageEdge)
                     }
                 }
+                // the page under fades down as one arrives and back up as it leaves; a tab cross-fades
+                .animation(reduce ? nil : Motion.page, value: model.path.count)
+                .animation(reduce ? nil : Motion.tab, value: model.tab)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Theme.bg)
             }

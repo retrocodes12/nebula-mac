@@ -4,6 +4,7 @@ import NebulaCore
 struct HomeView: View {
     @EnvironmentObject var model: AppModel
     @Environment(\.topBleed) private var bleed
+    @Environment(\.accessibilityReduceMotion) private var reduce
     /// The row the hero was first drawn from. It stays the hero while that row is on Home, so an
     /// add-on answering late — or Home loading again with the same rows — never swaps the art
     /// out from under the viewer.
@@ -39,7 +40,8 @@ struct HomeView: View {
                     }
                 }
 
-                ForEach(model.homeRows) { CatalogRowView(row: $0) }
+                // a row that arrives eases in and the ones below make room (Motion.rows on the stack)
+                ForEach(model.homeRows) { CatalogRowView(row: $0).transition(reduce ? .identity : Motion.rowIn) }
 
                 if model.homeLoading && model.homeRows.isEmpty { SkeletonRows() }
                 if model.activeAddons.isEmpty {
@@ -54,6 +56,7 @@ struct HomeView: View {
             }
         }
         .background(Theme.bg)
+        .animation(reduce ? nil : Motion.rows, value: model.homeRows.count)
         .bleedsUnderStatusBar()
         .onChange(of: model.homeRows.map(\.id)) { ids in
             if let h = heroRow, ids.contains(h) { return }
