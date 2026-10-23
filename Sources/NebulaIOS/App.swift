@@ -128,6 +128,17 @@ enum Launch {
                 }
             }
         }
+        // the screenshot rig: a second profile with a PIN, the picker, then (with "pin") its PIN screen
+        if let who = value("--who") {
+            model.viewers.setList([Viewer(id: "a", name: "", av: ""), Viewer(id: "b", name: "Kids", av: "#30D158", lock: PinLock.make(pin: "2468"))])
+            model.refreshViewers(); model.whoOpen = true
+            if who == "pin" {
+                Task {
+                    try? await Task.sleep(nanoseconds: 1_500_000_000)
+                    NotificationCenter.default.post(name: WhoPicker.shotsPin, object: "b")
+                }
+            }
+        }
         if let address = value("--play") {
             var c = URLComponents()
             c.scheme = "nebula"

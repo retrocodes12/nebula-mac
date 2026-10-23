@@ -686,6 +686,21 @@ public actor Cloud {
         } catch { return (nil, Cloud.errorText(error)) }
     }
 
+    /// Forgot PIN?: the account's password, checked by the cloud (nothing changes there). nil = right; else the sentence.
+    public func checkPassword(_ password: String) async -> String? {
+        let session = generation
+        guard linked, !password.isEmpty else { return "Could not reach Nebula. Try again." }
+        do {
+            let r = try await api("POST", "/v1/profile/check", ["password": password])
+            guard current(session), r.bool("ok") else { return "Could not reach Nebula. Try again." }
+            return nil
+        } catch let f as HTTPFailure where f.code == 403 {
+            return "Wrong password."
+        } catch let f as HTTPFailure where f.code == 429 {
+            return "Too many tries — wait a minute."
+        } catch { return "Could not reach Nebula. Try again." }
+    }
+
     // MARK: Support Nebula
 
     /// The last known answer of `GET /v1/support`, so the section does not flicker in.

@@ -778,6 +778,10 @@ final class FakeCloud: Transport, @unchecked Sendable {
             return reply(200, ["v": r.v, "rev": r.rev, "at": 1])
         }
         if path == "/v1/profile/signout" { tokens.removeAll(); return reply(200, [:]) }
+        if path == "/v1/profile/check" {
+            if body.str("password") == "too fast" { return reply(429, ["error": "rate limited"]) }
+            return body.str("password") == "correct horse" ? reply(200, ["ok": true]) : reply(403, ["error": "wrong password"])
+        }
         return reply(404, ["error": "not found"])
     }
 }

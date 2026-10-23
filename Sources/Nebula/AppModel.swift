@@ -184,7 +184,9 @@ final class AppModel: ObservableObject {
         // who's watching: this device's profile, and whether to ask at launch
         viewerList = viewers.list()
         viewerId = viewers.current
-        askingWho = live && viewerList.count == 2
+        // two profiles, or the remembered one wears a PIN: ask at launch (a fresh launch has none unlocked)
+        let me = viewerId
+        askingWho = live && (viewerList.count == 2 || viewerList.first { $0.id == me }?.locked == true)
 
         let addonsRef = self.addonStore, cloud = self.cloud
         progress.disabledAddons = { Set(addonsRef.all().filter { !$0.enabled }.map(\.manifestUrl)) }
@@ -414,7 +416,8 @@ final class AppModel: ObservableObject {
 
     func refreshViewers() {
         viewerList = viewers.list(); viewerId = viewers.current
-        if viewerList.count < 2 { askingWho = false }
+        // a lock arriving mid-session throws nobody out; the launch picker stays while its PIN is owed
+        if viewerList.count < 2 && !needsPin(viewerId) { askingWho = false }
     }
     func viewerName(_ v: Viewer) -> String {
         let n = v.name.trimmingCharacters(in: .whitespaces)
@@ -470,13 +473,17 @@ final class AppModel: ObservableObject {
     }
     /// A pencil's Save: that profile's name and colour.
     func editViewer(_ id: String, name: String, av: String) {
-        viewers.setList(viewerList.map { $0.id == id ? Viewer(id: $0.id, name: String(name.trimmingCharacters(in: .whitespaces).prefix(24)), av: av) : $0 })
+        viewers.setList(viewerList.map { $0.id == id ? Viewer(id: $0.id, name: String(name.trimmingCharacters(in: .whitespaces).prefix(24)), av: av, lock: $0.lock) : $0 })
         Task { await cloud.noteChanged("viewers") }
         refreshViewers()
     }
-    func closeWho() { askingWho = false; whoOpen = false }
+    /// Back/close on the picker. At launch, while the remembered profile is locked and not unlocked, it does nothing.
+    func closeWho() {
+        if askingWho && needsPin(viewerId) { return }
+        askingWho = false; whoOpen = false
+    }
     func renameViewer(_ name: String) {
-        viewers.setList(viewerList.map { $0.id == viewerId ? Viewer(id: $0.id, name: String(name.trimmingCharacters(in: .whitespaces).prefix(24)), av: $0.av) : $0 })
+        viewers.setList(viewerList.map { $0.id == viewerId ? Viewer(id: $0.id, name: String(name.trimmingCharacters(in: .whitespaces).prefix(24)), av: $0.av, lock: $0.lock) : $0 })
         Task { await cloud.noteChanged("viewers") }
         refreshViewers()
     }
@@ -488,6 +495,14 @@ final class AppModel: ObservableObject {
         refreshViewers()
         say("Removed the second profile. Its history and add-ons are kept if you add it again.")
     }
+
+    // MARK: profile PIN (10-23)
+
+    /// Profiles entered with their PIN this run (or locked on this device, or whose PIN was just removed). Memory only.
+    @Published var unlocked: Set<String> = []
+    /// Wrong PINs in a row, and the 30 s the keypad sleeps after five.
+    var pinWrong = 0
+    var pinHoldUntil = Date.distantPast
 
     // MARK: synced looks and keys
 

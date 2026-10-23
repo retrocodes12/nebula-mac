@@ -64,6 +64,27 @@ enum Shots {
                 await pause(1.2)
                 await snap(window, dir, "10\(n == 1 ? "b" : "c")-settings-\(section)")
             }
+            // who's watching with a PIN on the second profile (the store is a scratch one): the lock under the name, the
+            // PIN screen, digits typed on the keyboard, a wrong PIN, Esc back to the picker
+            let wasViewers = m.viewers.list()
+            m.viewers.setList([Viewer(id: "a", name: "", av: ""), Viewer(id: "b", name: "Kids", av: "#30D158", lock: PinLock.make(pin: "2468"))])
+            m.refreshViewers(); m.whoOpen = true
+            await pause(1.2)
+            await snap(window, dir, "13a-who-locked")
+            NotificationCenter.default.post(name: WhoPicker.shotsPin, object: "b")
+            await pause(1)
+            await snap(window, dir, "13b-who-pin")
+            for (c, code) in [("1", 18), ("3", 20)] as [(String, UInt16)] { key(window, c, code); await pause(0.15) }
+            await pause(0.6)
+            await snap(window, dir, "13c-who-pin-typed")
+            for (c, code) in [("5", 23), ("7", 26)] as [(String, UInt16)] { key(window, c, code); await pause(0.15) }
+            await pause(1)
+            await snap(window, dir, "13d-who-pin-wrong")
+            key(window, "\u{1b}", 53)
+            await pause(1)
+            await snap(window, dir, "13e-who-after-esc")
+            m.viewers.setList(wasViewers); m.refreshViewers(); m.closeWho()
+            await pause(0.8)
             // the player, in the real window: the picture proves the Metal path, not just the decoder
             if let address = ProcessInfo.processInfo.environment["NEBULA_SHOTS_PLAY"], !address.isEmpty {
                 m.select(.home)
@@ -94,6 +115,12 @@ enum Shots {
             log("done")
             exit(0)
         }
+    }
+
+    static func key(_ window: NSWindow, _ c: String, _ code: UInt16) {
+        if let ev = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                     windowNumber: window.windowNumber, context: nil, characters: c, charactersIgnoringModifiers: c,
+                                     isARepeat: false, keyCode: code) { NSApp.postEvent(ev, atStart: false) }
     }
 
     static func log(_ s: String) { FileHandle.standardError.write(Data("shots: \(s)\n".utf8)) }

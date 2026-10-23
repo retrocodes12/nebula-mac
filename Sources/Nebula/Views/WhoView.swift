@@ -9,16 +9,26 @@ private let whoColours = ["#636366", "#E50914", "#0A84FF", "#30D158", "#BF5AF2",
 /// "Add Profile" circle while there is room for one, and the button reads Done.) At launch with two profiles
 /// (AppModel.askingWho), and from Settings › Who's watching (AppModel.whoOpen), over everything.
 struct WhoPicker: View {
+    /// The screenshot rigs open the PIN screen for a profile id with this (Shots on the Mac, `--who-pin` on a phone).
+    static let shotsPin = Notification.Name("nebula.shots.whoPin")
     @EnvironmentObject var model: AppModel
     @Environment(\.nebulaAccent) private var accent
     @State private var managing = false
     @State private var editing: String? = nil
+    /// The PIN screen (10-23), over the list or the editor; the editor's unsaved name and colour wait for it here.
+    @State private var pinAsk: PinAsk? = nil
+    @State private var draftName = ""
+    @State private var draftAv = ""
 
     var body: some View {
         ZStack {
             Theme.bg.ignoresSafeArea()
-            if let id = editing, let v = model.viewerList.first(where: { $0.id == id }) {
-                WhoEditor(v: v, onDone: { editing = nil })
+            if let ask = pinAsk {
+                WhoPin(ask: ask, onPassed: { pinPassed(ask) }, onCancel: { pinAsk = nil })
+                    .id("\(ask.id)-\(ask.purpose)")
+            } else if let id = editing, let v = model.viewerList.first(where: { $0.id == id }) {
+                WhoEditor(v: v, name: $draftName, av: $draftAv, onPin: { pinAsk = PinAsk(id: v.id, mode: .choose, purpose: .set) },
+                          onDone: { editing = nil })
             } else {
                 ScrollView {
                     VStack(spacing: 0) {
@@ -49,12 +59,39 @@ struct WhoPicker: View {
                 }
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: WhoPicker.shotsPin)) { n in
+            if let id = n.object as? String { pinAsk = PinAsk(id: id, mode: .check, purpose: .enter) }
+        }
         #if os(macOS)
         // Esc steps out: the editor, then managing, then the picker (keeping the profile this device is on)
         .onExitCommand {
-            if editing != nil { editing = nil } else if managing { managing = false } else { model.closeWho() }
+            if pinAsk != nil { pinAsk = nil } else if editing != nil { editing = nil } else if managing { managing = false } else { model.closeWho() }
         }
         #endif
+    }
+
+    /// A locked profile that is not unlocked asks for its PIN before it is entered or edited.
+    private func pick(_ v: Viewer) {
+        if managing {
+            if model.needsPin(v.id) { pinAsk = PinAsk(id: v.id, mode: .check, purpose: .edit) } else { edit(v.id) }
+        } else {
+            if model.needsPin(v.id) { pinAsk = PinAsk(id: v.id, mode: .check, purpose: .enter) } else { model.switchViewer(v.id) }
+        }
+    }
+
+    private func edit(_ id: String) {
+        guard let v = model.viewerList.first(where: { $0.id == id }) else { return }
+        draftName = v.name; draftAv = model.viewerAvatar(v); editing = id
+    }
+
+    /// The PIN screen is done: on with what it was for.
+    private func pinPassed(_ ask: PinAsk) {
+        pinAsk = nil
+        switch ask.purpose {
+        case .enter: model.switchViewer(ask.id)
+        case .edit: edit(ask.id)
+        case .set: break               // back to the editor it came from
+        }
     }
 
     private var tileIds: [String] {
@@ -66,9 +103,9 @@ struct WhoPicker: View {
         let v = model.viewerList.first { $0.id == id }
         Button(action: {
             if let v = v {
-                if managing { editing = v.id } else { model.switchViewer(v.id) }
+                pick(v)
             } else {
-                model.addViewerQuietly(); editing = "b"
+                model.addViewerQuietly(); edit("b")
             }
         }) {
             VStack(spacing: 14) {
@@ -97,6 +134,11 @@ struct WhoPicker: View {
                     .scaledFont(size: 18, weight: .semibold)
                     .foregroundStyle(v == nil ? Theme.label2 : Theme.ink)
                     .lineLimit(1)
+                // a locked profile says so before it is pressed
+                if v?.locked == true {
+                    Image(systemName: "lock.fill").font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.label2)
+                        .padding(.top, -6)
+                }
             }
             .frame(width: 160)
             .contentShape(Rectangle())
@@ -124,13 +166,14 @@ struct WhoMonogram: View {
     }
 }
 
-/// A pencil pressed: the profile's name and colour; the second can be removed (its history and add-ons are kept).
+/// A pencil pressed: the profile's name and colour, its PIN; the second can be removed (its history and add-ons are kept).
 private struct WhoEditor: View {
     @EnvironmentObject var model: AppModel
     let v: Viewer
+    @Binding var name: String
+    @Binding var av: String
+    let onPin: () -> Void
     let onDone: () -> Void
-    @State private var name = ""
-    @State private var av = ""
 
     var body: some View {
         ScrollView {
@@ -151,6 +194,12 @@ private struct WhoEditor: View {
                         }
                         .buttonStyle(.plain)
                     }
+                }
+                .padding(.top, 22)
+                // the PIN: added or changed through the PIN screen, saved at once; removed here
+                HStack(spacing: 12) {
+                    Chip(text: v.locked ? "Change PIN" : "Add a PIN", action: onPin)
+                    if v.locked { Chip(text: "Remove PIN") { model.removePin(v.id) } }
                 }
                 .padding(.top, 22)
                 Button(action: { save() }) {
@@ -179,7 +228,6 @@ private struct WhoEditor: View {
             .frame(maxWidth: .infinity)
             .padding(.horizontal, 24).padding(.top, 72).padding(.bottom, 40)
         }
-        .onAppear { name = v.name; av = model.viewerAvatar(v) }
     }
 
     private func save() { model.editViewer(v.id, name: name, av: av); onDone() }
