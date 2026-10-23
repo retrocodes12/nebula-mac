@@ -45,9 +45,9 @@ struct WhoPin: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 0) {
-                WhoMonogram(hex: model.viewerAvatar(viewer), name: model.viewerName(viewer), size: 96)
+                WhoMonogram(hex: model.viewerAvatar(viewer), name: model.viewerName(viewer), size: 80)
                 Text(title).scaledFont(size: 24, weight: .bold).foregroundStyle(Theme.ink)
-                    .multilineTextAlignment(.center).padding(.top, 22)
+                    .multilineTextAlignment(.center).padding(.top, 18)
                 if forgot {
                     forgotBody
                 } else {
@@ -58,18 +58,18 @@ struct WhoPin: View {
                                 .frame(width: 14, height: 14)
                         }
                     }
-                    .padding(.top, 26)
+                    .padding(.top, 22)
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel("\(typed.count) of 4")
                     messageLine
-                    keypad.padding(.top, 14)
+                    keypad.padding(.top, 10)
                     if ask.mode == .check {
                         Button(action: { forgot = true; message = "" }) {
                             Text("Forgot PIN?").scaledFont(size: 15, weight: .medium).foregroundStyle(Theme.label2)
                                 .padding(.horizontal, 16).padding(.vertical, 8).contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
-                        .padding(.top, 18)
+                        .padding(.top, 10)
                     }
                 }
                 Button(action: cancel) {
@@ -82,7 +82,7 @@ struct WhoPin: View {
                 .padding(.top, 16)
             }
             .frame(maxWidth: .infinity)
-            .padding(.horizontal, 24).padding(.top, 56).padding(.bottom, 40)
+            .padding(.horizontal, 24).padding(.top, 40).padding(.bottom, 24)
         }
         .onAppear {
             if holding { holdMessage() }
@@ -104,7 +104,7 @@ struct WhoPin: View {
             .foregroundStyle(Theme.danger)
             .lineLimit(1).minimumScaleFactor(0.8)
             .frame(maxWidth: 360, minHeight: 22)
-            .padding(.top, 18)
+            .padding(.top, 14)
     }
 
     @ViewBuilder private var forgotBody: some View {
@@ -136,16 +136,16 @@ struct WhoPin: View {
 
     private var keypad: some View {
         let keys = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "del"]
-        return LazyVGrid(columns: Array(repeating: GridItem(.fixed(76), spacing: 22), count: 3), spacing: 16) {
+        return LazyVGrid(columns: Array(repeating: GridItem(.fixed(68), spacing: 22), count: 3), spacing: 12) {
             ForEach(keys.indices, id: \.self) { i in
                 let k = keys[i]
                 if k.isEmpty {
-                    Color.clear.frame(width: 72, height: 72)
+                    Color.clear.frame(width: 64, height: 64)
                 } else {
                     Button(action: { k == "del" ? delete() : digit(k) }) {
                         Circle().fill(k == "del" ? Color.clear : Theme.surface)
                             .overlay(Circle().stroke(k == "del" ? Color.clear : Theme.line, lineWidth: 1))
-                            .frame(width: 72, height: 72)
+                            .frame(width: 64, height: 64)
                             .overlay(Group {
                                 if k == "del" {
                                     Image(systemName: "delete.left").font(.system(size: 24, weight: .regular)).foregroundStyle(Theme.ink)

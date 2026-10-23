@@ -38,7 +38,7 @@ struct WhoPicker: View {
                         }
                         Text("Who's watching?").scaledFont(size: 32, weight: .bold).foregroundStyle(Theme.ink).padding(.top, 22)
                         // two to a row, the Add circle wrapping under them while managing (as the reference)
-                        LazyVGrid(columns: [GridItem(.fixed(160), spacing: 24), GridItem(.fixed(160))], spacing: 36) {
+                        LazyVGrid(columns: [GridItem(.fixed(160), spacing: 24, alignment: .top), GridItem(.fixed(160), alignment: .top)], spacing: 36) {
                             ForEach(tileIds, id: \.self) { id in tile(id) }
                         }
                         .padding(.top, 60)
