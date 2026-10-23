@@ -8,6 +8,8 @@ extension AppModel {
         guard let v = viewerList.first(where: { $0.id == id }), v.locked else { return false }
         return !unlocked.contains(id)
     }
+    /// The profile this device is on — or the first, while a removed second profile's switch is still under way.
+    var viewerOn: String { viewerList.contains { $0.id == viewerId } ? viewerId : "a" }
     /// The right PIN for a locked profile.
     func pinRight(_ id: String) { unlocked.insert(id); pinWrong = 0 }
     /// Add/Change: saved at once (stamped, synced); the profile counts as unlocked.

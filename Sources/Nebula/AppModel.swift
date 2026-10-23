@@ -408,7 +408,11 @@ final class AppModel: ObservableObject {
             // the list changed elsewhere; a second profile removed there sends this device back to the first
             let was = viewerId
             refreshViewers()
-            if viewerId != was { progress.reset(); library.reset(); progressChanged(); libraryVersion += 1; addonsSwitched() }
+            if viewerId != was {
+                progress.reset(); library.reset(); progressChanged(); libraryVersion += 1; addonsSwitched()
+                // sent to a first profile that wears a PIN this device has not had: the picker asks for it
+                if needsPin(viewerId) { askingWho = true }
+            }
         }
     }
 
@@ -417,7 +421,7 @@ final class AppModel: ObservableObject {
     func refreshViewers() {
         viewerList = viewers.list(); viewerId = viewers.current
         // a lock arriving mid-session throws nobody out; the launch picker stays while its PIN is owed
-        if viewerList.count < 2 && !needsPin(viewerId) { askingWho = false }
+        if viewerList.count < 2 && !needsPin(viewerOn) { askingWho = false }
     }
     func viewerName(_ v: Viewer) -> String {
         let n = v.name.trimmingCharacters(in: .whitespaces)
@@ -435,8 +439,8 @@ final class AppModel: ObservableObject {
 
     /// On to the other profile: what this one changed goes up under its own names first, then the other's history
     /// is read and every page showing a history redraws.
-    func switchViewer(_ id: String) {
-        askingWho = false; whoOpen = false
+    func switchViewer(_ id: String, keepAsking: Bool = false) {
+        askingWho = keepAsking; whoOpen = false
         guard id != viewers.current else { return }
         Task {
             await cloud.flushProfile()
@@ -479,7 +483,7 @@ final class AppModel: ObservableObject {
     }
     /// Back/close on the picker. At launch, while the remembered profile is locked and not unlocked, it does nothing.
     func closeWho() {
-        if askingWho && needsPin(viewerId) { return }
+        if askingWho && needsPin(viewerOn) { return }
         askingWho = false; whoOpen = false
     }
     func renameViewer(_ name: String) {
@@ -489,7 +493,8 @@ final class AppModel: ObservableObject {
     }
     func removeSecondViewer() {
         let list = viewerList.filter { $0.id != "b" }
-        if viewerId == "b" { switchViewer("a") }
+        // off the second profile onto the first: a PIN on the first is still asked for
+        if viewerId == "b" { switchViewer("a", keepAsking: needsPin("a")) }
         viewers.setList(list)
         Task { await cloud.noteChanged("viewers") }
         refreshViewers()
