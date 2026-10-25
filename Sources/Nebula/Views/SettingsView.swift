@@ -47,6 +47,8 @@ struct SettingsView: View {
                                 }
                             }
                         }
+                        // the panel stays as wide as the others when the swatches go under the words
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
 
