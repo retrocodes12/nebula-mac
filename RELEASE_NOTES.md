@@ -1,5 +1,7 @@
 Nebula for Mac and iPhone — native Swift apps (SwiftUI, libmpv engine). macOS 13 or later on Apple silicon and Intel; iOS 16 or later, iPad included.
 
+**New in 0.6.4** — what the support page promises supporters, on the Mac and iPhone too: Supporter Plus, Founders and Monthly supporters get six more accent colours and a colour of their own, the vote on what Nebula builds next and "Your month on Nebula" (hours, busiest day, top titles — worked out on this device, never sent anywhere), all in Settings › Support; Founders get the gold ring on their profile picture.
+
 **New in 0.6.3** — a who's-watching profile can have a PIN: Manage Profiles, open a profile, Add a PIN. Picking a profile with a PIN asks for its four digits, at launch too (on a Mac, the number keys work). Forgot PIN? removes it with your account's password.
 
 **New in 0.6.2** — the app moves with you: a page you open slides in from the side and Back sends it away, tabs cross-fade, cards give when pressed, Home's rows ease in as your add-ons answer, and a title page's picture settles as it lands. Reduce Motion keeps the cuts.
