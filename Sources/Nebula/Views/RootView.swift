@@ -173,6 +173,7 @@ struct Sidebar: View {
                 HStack(spacing: 10) {
                     Circle().fill(Color(hex: model.profile?.avatar ?? "#636366")).frame(width: 28, height: 28)
                         .overlay(Text(String((model.profile?.name ?? "?").prefix(1)).uppercased()).font(.system(size: 12, weight: .bold)).foregroundStyle(.white))
+                        .founderRing((model.profile?.rank ?? 0) >= 3)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(model.profile?.name ?? "Sign in").font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Theme.ink).lineLimit(1)
                         // two lines when it needs them: one line cut it to "Sync with your TV an…"

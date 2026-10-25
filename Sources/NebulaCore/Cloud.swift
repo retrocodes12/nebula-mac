@@ -743,6 +743,21 @@ public actor Cloud {
         }
     }
 
+    /// The open vote, this profile's ballot and the last result (`GET /v1/support/vote`, signed when there is a
+    /// profile — `mine` and `can` are the caller's). nil when it could not be asked.
+    public func loadVote() async -> SupportVote? {
+        guard let r = try? await api("GET", "/v1/support/vote") else { return nil }
+        return SupportVote.parse(r)
+    }
+
+    /// Cast or change this profile's ballot: the new state, or a sentence.
+    public func castVote(_ option: String) async -> (SupportVote?, String?) {
+        guard linked else { return (nil, "Sign in first — your vote lives on your profile.") }
+        do {
+            return (SupportVote.parse(try await api("POST", "/v1/support/vote", ["option": option])), nil)
+        } catch { return (nil, SupportVote.errorText(error)) }
+    }
+
     /// Show or hide the name on the wall, or choose the mark (Supporter Plus and up).
     public func setSupport(wall: Bool? = nil, mark: String? = nil) async -> String? {
         var body: JSONObject = [:]

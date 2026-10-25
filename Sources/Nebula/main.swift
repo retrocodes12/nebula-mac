@@ -88,6 +88,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         // the last few seconds of progress should reach the profile before the process goes
+        model?.watchLog.flush()                 // the monthly recap's last seconds (this Mac only)
         guard let cloud = model?.cloud else { return }
         let done = DispatchSemaphore(value: 0)
         Task.detached { await cloud.flush(); done.signal() }

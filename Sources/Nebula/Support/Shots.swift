@@ -64,6 +64,18 @@ enum Shots {
                 await pause(1.2)
                 await snap(window, dir, "10\(n == 1 ? "b" : "c")-settings-\(section)")
             }
+            // the supporters' perks, as a planted Founder (nothing reaches the cloud): the accent row with the Plus
+            // colours and the picker, the gold ring, the vote with one's own ballot in, the month's recap
+            let wasAccent = m.prefs.accent
+            SupportPanel.plantForShots(m)
+            await pause(3.5)
+            for (n, section) in [("a", "appearance"), ("b", "support"), ("c", "recap")] {
+                NotificationCenter.default.post(name: SettingsView.shotsScroll, object: section)
+                await pause(1.2)
+                await snap(window, dir, "10d\(n)-perks-\(section)")
+            }
+            m.profile = nil
+            m.setAccent(wasAccent)
             // who's watching with a PIN on the second profile (the store is a scratch one): the lock under the name, the
             // PIN screen, digits typed on the keyboard, a wrong PIN, Esc back to the picker
             let wasViewers = m.viewers.list()

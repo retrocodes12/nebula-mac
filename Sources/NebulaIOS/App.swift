@@ -28,6 +28,7 @@ struct NebulaPhoneApp: App {
                 model.cameToFront()
             case .background:
                 Sync.flushInBackground(model.cloud)
+                model.watchLog.flush()          // the recap's last seconds, on this phone only
             default:
                 // iOS can suspend us without warning, so the last seconds of progress go up as
                 // soon as the app leaves the screen rather than when it closes
@@ -137,6 +138,14 @@ enum Launch {
                     try? await Task.sleep(nanoseconds: 1_500_000_000)
                     NotificationCenter.default.post(name: WhoPicker.shotsPin, object: "b")
                 }
+            }
+        }
+        // the screenshot rig: a planted Founder's perks, then Settings scrolled to a section ("appearance", "support", "recap")
+        if let section = value("--perks") {
+            SupportPanel.plantForShots(model)
+            Task {
+                try? await Task.sleep(nanoseconds: 4_000_000_000)
+                NotificationCenter.default.post(name: SettingsView.shotsScroll, object: section)
             }
         }
         if let address = value("--play") {

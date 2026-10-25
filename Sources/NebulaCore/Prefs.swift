@@ -32,8 +32,37 @@ public final class Prefs: @unchecked Sendable {
         ("Violet", "#BF5AF2"), ("Amber", "#FF9F0A"), ("Rose", "#FF375F"),
     ]
 
+    /// Coral to Slate — Supporter Plus, Founder and the monthly plan (the shared player's PLUS_ACCENTS), beside a
+    /// colour of one's own.
+    public static let plusAccents: [(name: String, hex: String)] = [
+        ("Coral", "#FF7A5C"), ("Lavender", "#B08CFF"), ("Lime", "#B4E33D"), ("Sky", "#5AC8FA"), ("Peach", "#FFB07A"), ("Slate", "#8E9AAF"),
+    ]
+
+    public static let defaultAccent = "#E50914"
+
+    /// "#RRGGBB", either case — the only shape a colour of one's own is kept in.
+    public static func isHex(_ v: String) -> Bool {
+        v.count == 7 && v.hasPrefix("#") && v.dropFirst().allSatisfy { $0.isHexDigit }
+    }
+
+    /// Which tier a stored accent needs (the web's accentRank, Android's Prefs.accentRank): 0 the seven anyone
+    /// has, 1 the supporter colours, 2 the Plus palette or any colour of one's own.
+    public static func accentRank(_ v: String) -> Int {
+        let u = v.uppercased()
+        if accents.contains(where: { $0.hex == u }) { return 0 }
+        if supporterAccents.contains(where: { $0.hex == u }) { return 1 }
+        return 2
+    }
+
+    /// The accent actually drawn: a colour above the profile's tier (signed out, a plan that ended) falls back to
+    /// the red — the stored choice is never rewritten, so it comes back with the tier.
+    public static func shownAccent(_ stored: String, rank: Int) -> String {
+        guard isHex(stored), accentRank(stored) <= rank else { return defaultAccent }
+        return stored.uppercased()
+    }
+
     public var accent: String {
-        get { (get("accent") as? String) ?? "#E50914" }
+        get { (get("accent") as? String) ?? Prefs.defaultAccent }
         set { put("accent", newValue) }
     }
     /// Seconds a left/right arrow moves.

@@ -12,6 +12,8 @@ struct SettingsView: View {
     @State private var seekrField = ""
     @State private var seekrNote: String?
     @State private var seekrBusy = false
+    /// A colour of one's own is drawn at once while the picker moves, and kept once it rests.
+    @State private var ownTask: Task<Void, Never>?
 
     /// The screenshot rig's way to the lower sections (Shots posts a section id).
     static let shotsScroll = Notification.Name("nebula.shots.settingsScroll")
@@ -26,16 +28,22 @@ struct SettingsView: View {
 
                 section("Who's watching") { WhoSettings() }
 
-                section("Appearance") {
+                section("Appearance", id: "appearance") {
                     Panel {
                         PanelRow(title: "Accent", detail: "The one colour Nebula uses.") {
-                            HStack(spacing: 8) {
+                            // as many lines as the row needs: with every supporter colour there are seventeen
+                            FactsFlow(lineSpacing: 0) {
                                 ForEach(accentChoices, id: \.hex) { a in
-                                    Button(action: { model.prefs.accent = a.hex; model.accentHex = a.hex }) {
+                                    Button(action: { ownTask?.cancel(); model.setAccent(a.hex) }) {
                                         Circle().fill(Color(hex: a.hex)).frame(width: 22, height: 22)
                                             .overlay(Circle().strokeBorder(.white, lineWidth: model.accentHex == a.hex ? 2 : 0).padding(-3))
+                                            .frame(width: 30, height: 30).contentShape(Rectangle())
                                     }
-                                    .buttonStyle(.plain).help(a.name)
+                                    .buttonStyle(.plain).help(a.name).accessibilityLabel(a.name)
+                                }
+                                if (model.profile?.rank ?? 0) >= 2 {
+                                    ColorPicker("Any colour", selection: ownColour, supportsOpacity: false)
+                                        .labelsHidden().help("Any colour").frame(minWidth: 30, minHeight: 30).padding(.leading, 4)
                                 }
                             }
                         }
@@ -81,7 +89,7 @@ struct SettingsView: View {
                 }
 
                 if model.supportVisible {
-                    section("Support Nebula") { SupportPanel() }
+                    section("Support Nebula", id: "support") { SupportPanel() }
                 }
 
                 section("About") {
@@ -130,9 +138,31 @@ struct SettingsView: View {
     private let skipDetail = "How far a double tap or the skip buttons move."
     #endif
 
-    /// Gold, Ice and Mint join the seven for supporters.
+    /// Gold, Ice and Mint join the seven for supporters; Coral to Slate and a colour of one's own from Supporter
+    /// Plus up (the monthly plan and Founders too).
     private var accentChoices: [(name: String, hex: String)] {
-        (model.profile?.rank ?? 0) >= 1 ? Prefs.accents + Prefs.supporterAccents : Prefs.accents
+        let rank = model.profile?.rank ?? 0
+        return Prefs.accents + (rank >= 1 ? Prefs.supporterAccents : []) + (rank >= 2 ? Prefs.plusAccents : [])
+    }
+
+    /// The colour picker's side: what is drawn now, and a new colour stored as #RRGGBB once the picker rests.
+    private var ownColour: Binding<Color> {
+        Binding(get: { Color(hex: model.accentHex) }, set: { c in
+            let hex = SettingsView.hex(c)
+            guard hex != model.accentHex else { return }
+            model.accentHex = hex
+            ownTask?.cancel()
+            ownTask = Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 400_000_000)
+                if !Task.isCancelled { model.setAccent(hex) }
+            }
+        })
+    }
+
+    static func hex(_ c: Color) -> String {
+        let v = Platform.rgb(c)
+        func two(_ x: Double) -> String { String(format: "%02X", Int((min(1, max(0, x)) * 255).rounded())) }
+        return "#" + two(v.r) + two(v.g) + two(v.b)
     }
 
     /// Seekr previews with the viewer's own seekr.tv key: pictures over the scrubber. The key goes
@@ -267,6 +297,7 @@ struct ProfilePanel: View {
             HStack(spacing: 14) {
                 Circle().fill(Color(hex: p.avatar)).frame(width: 44, height: 44)
                     .overlay(Text(String(p.name.prefix(1)).uppercased()).font(.system(size: 18, weight: .bold)).foregroundStyle(.white))
+                    .founderRing(p.rank >= 3)
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
                         Text(p.name).scaledFont(size: 15, weight: .semibold).foregroundStyle(Theme.ink)

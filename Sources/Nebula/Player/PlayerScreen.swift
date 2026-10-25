@@ -413,6 +413,8 @@ struct PlayerScreen: View {
     }
 
     private func tick(_ t: Double) {
+        // the monthly recap counts live too, and only while the picture moves
+        model.noteWatching(request.title, playing: mpv.loaded && !mpv.paused && !mpv.buffering && !mpv.ended && mpv.failure == nil)
         guard mpv.loaded, !mpv.isLive, mpv.duration > 0 else { return }
         if abs(t - lastSaved) >= 5 { lastSaved = t; save() }
         if let note = extras.tick(t, mode: model.prefs.skipIntro, live: mpv.isLive, mpv: mpv) { show(flash: note) }
@@ -497,6 +499,7 @@ struct PlayerScreen: View {
         ManifestProxy.shared.release(manifestToken)
         manifestToken = nil
         save()
+        model.playerClosedWatchLog()
         extras.stop()
         flashTask?.cancel()
         keepVolume()

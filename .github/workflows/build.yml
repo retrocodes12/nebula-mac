@@ -229,6 +229,10 @@ jobs:
           shot home --tab home --addon "https://sports.nebulapro.xyz/sports/i/free/manifest.json"
           shot addons --tab addons
           shot settings --tab settings
+          # the supporters' perks as a planted Founder: the accent row, the vote, the month's recap
+          SETTLE=10 shot perks-appearance --tab settings --perks appearance
+          SETTLE=10 shot perks-support --tab settings --perks support
+          SETTLE=10 shot perks-recap --tab settings --perks recap
           shot search --tab search
           # the pages under the full-bleed art, where the hero's width bug lived
           SETTLE=14 shot film --tab home --page film

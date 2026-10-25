@@ -11,9 +11,13 @@ public final class Store: @unchecked Sendable {
         dir = directory
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         #if os(iOS)
-        excludeCredentialFromBackup()
+        for k in Store.privateKeys { excludeFromBackup(k) }
         #endif
     }
+
+    /// Files that never leave the device, not even in its backups: the sign-in, and the watch log behind the
+    /// supporters' monthly recap (WatchLog.swift says why).
+    public static let privateKeys: Set<String> = ["cloud_link", "watchlog_v1"]
 
     /// `~/Library/Application Support/Nebula` on a Mac.
     public static func standard() -> Store {
@@ -40,7 +44,7 @@ public final class Store: @unchecked Sendable {
             // the credential lives here too — keep the files to this user
             try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file(key).path)
             #if os(iOS)
-            if key == "cloud_link" { excludeCredentialFromBackup() }
+            if Store.privateKeys.contains(key) { excludeFromBackup(key) }
             #endif
         } else {
             cache[key] = nil
@@ -49,16 +53,16 @@ public final class Store: @unchecked Sendable {
     }
 
     #if os(iOS)
-    /// Also migrate an existing sign-in on open, without waiting for another sign-in to rewrite it.
-    private func excludeCredentialFromBackup() {
-        var u = file("cloud_link")
+    /// Also migrate an existing file on open, without waiting for another write to rewrite it.
+    private func excludeFromBackup(_ key: String) {
+        var u = file(key)
         guard FileManager.default.fileExists(atPath: u.path) else { return }
         do {
             var rv = URLResourceValues(); rv.isExcludedFromBackup = true
             try u.setResourceValues(rv)
         } catch {
-            // drop a sign-in we cannot protect, but never keep the app from opening
-            cache["cloud_link"] = nil
+            // drop a file we cannot protect, but never keep the app from opening
+            cache[key] = nil
             try? FileManager.default.removeItem(at: u)
         }
     }

@@ -90,6 +90,8 @@ final class AppModel: ObservableObject {
     let progress: ProgressStore
     let library: LibraryStore
     let prefs: Prefs
+    /// What this device played, for the supporters' monthly recap — never synced, never sent (WatchLog.swift).
+    let watchLog: WatchLog
     let stremio: Stremio
     let cloud: Cloud
     /// Who's watching (Viewers.swift): up to two profiles on the account, each with its own history.
@@ -128,6 +130,8 @@ final class AppModel: ObservableObject {
     @Published var seekrVersion = 0
     /// Support Nebula: where to send someone, and the wall (the last known answer at launch).
     @Published var support = SupportInfo.empty
+    /// Bumped when a player closes, so the monthly recap shows what it just played.
+    @Published var watchLogVersion = 0
 
     /// A newer release than this build, when there is one ("v0.2.0").
     @Published var updateTag: String?
@@ -176,7 +180,8 @@ final class AppModel: ObservableObject {
         stremio = Stremio()
         cloud = Cloud(store: store, addons: addonStore, progress: progress, library: library,
                       deviceName: Platform.deviceName, platform: Platform.client, viewers: viewers)
-        accentHex = prefs.accent
+        watchLog = WatchLog(store: store)
+        accentHex = Prefs.shownAccent(prefs.accent, rank: cloud.storedProfile()?.rank ?? 0)
         addonStore.seedIfNeeded()
         addons = addonStore.all()
         profile = cloud.storedProfile()
@@ -543,12 +548,28 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// A supporter's accent stays theirs only while they are one.
+    /// A supporter's accent stays theirs only while the tier lasts — and comes back with it (the stored choice is kept).
     private func profileChanged(_ p: Profile?) {
         profile = p
-        if (p?.rank ?? 0) < 1, Prefs.supporterAccents.contains(where: { $0.hex == accentHex }) {
-            accentHex = Prefs.accents[0].hex
-        }
+        accentHex = Prefs.shownAccent(prefs.accent, rank: p?.rank ?? 0)
+    }
+
+    /// One beat of a player's clock for the monthly recap: `playing` = the picture is moving now. Both players call
+    /// it from their clock (four times a second while it moves), under the title's own name — a series, not its episode.
+    func noteWatching(_ title: String, playing: Bool) {
+        watchLog.tick(title: title, playing: playing)
+    }
+
+    /// A player closed: what it counted goes to disk, and an open recap redraws.
+    func playerClosedWatchLog() {
+        watchLog.flush()
+        watchLogVersion &+= 1
+    }
+
+    /// The accent, chosen in Settings (device-local, like the other apps).
+    func setAccent(_ hex: String) {
+        prefs.accent = hex
+        accentHex = Prefs.shownAccent(hex, rank: profile?.rank ?? 0)
     }
 
     // MARK: Home
