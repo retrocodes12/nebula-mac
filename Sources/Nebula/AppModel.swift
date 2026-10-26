@@ -193,17 +193,23 @@ final class AppModel: ObservableObject {
         let me = viewerId
         askingWho = live && (viewerList.count == 2 || viewerList.first { $0.id == me }?.locked == true)
 
-        let addonsRef = self.addonStore, cloud = self.cloud
+        let addonsRef = self.addonStore, cloud = self.cloud, viewersRef = self.viewers
         progress.disabledAddons = { Set(addonsRef.all().filter { !$0.enabled }.map(\.manifestUrl)) }
+        // each change is marked under the profile it was made on, read here and not when the cloud gets to it
         progress.onChange = { [weak self] in
-            Task { await cloud.noteChanged("progress") }
+            let v = viewersRef.current
+            Task { await cloud.noteChanged("progress", viewer: v) }
             Task { @MainActor in self?.progressChanged() }
         }
         library.onChange = { [weak self] in
-            Task { await cloud.noteChanged("library") }
+            let v = viewersRef.current
+            Task { await cloud.noteChanged("library", viewer: v) }
             Task { @MainActor in self?.libraryVersion += 1 }
         }
-        addonsRef.onChange = { Task { await cloud.noteChanged("addons") } }
+        addonsRef.onChange = {
+            let v = viewersRef.current
+            Task { await cloud.noteChanged("addons", viewer: v) }
+        }
         guard live else { return }
         network.pathUpdateHandler = { [weak self] p in
             let up = p.status == .satisfied
@@ -214,7 +220,9 @@ final class AppModel: ObservableObject {
             await cloud.setHandlers(
                 onApplied: { [weak self] keys in Task { @MainActor in self?.syncApplied(keys) } },
                 onSignedOut: { [weak self] in Task { @MainActor in self?.say("This \(Platform.deviceWord) was signed out of your profile. Nothing on it was deleted.") } },
-                onProfile: { [weak self] p in Task { @MainActor in self?.profileChanged(p) } })
+                onProfile: { [weak self] p in Task { @MainActor in self?.profileChanged(p) } },
+                onAccountReset: { [weak self] in Task { @MainActor in self?.accountReset() } },
+                onSignedIn: { [weak self] in Task { @MainActor in self?.signedIn() } })
             await cloud.pullAll(force: true)
             _ = await cloud.refreshProfile()
             await self.loadSupport()
@@ -442,21 +450,52 @@ final class AppModel: ObservableObject {
     }
     var viewerNow: Viewer { viewerList.first { $0.id == viewerId } ?? Viewer(id: "a", name: "", av: "") }
 
+    /// The profile a switch under way is going to (nil when none is). A switch waits on the network first, so a
+    /// second pick made meanwhile is measured against this, not against the profile still on.
+    private var pendingViewer: String?
+    private var switchTask: Task<Void, Never>?
+
     /// On to the other profile: what this one changed goes up under its own names first, then the other's history
-    /// is read and every page showing a history redraws.
+    /// is read and every page showing a history redraws. Switches run one after another; only the last pick lands.
     func switchViewer(_ id: String, keepAsking: Bool = false) {
         askingWho = keepAsking; whoOpen = false
-        guard id != viewers.current else { return }
-        Task {
+        guard id != (pendingViewer ?? viewers.current) else { return }
+        pendingViewer = id
+        let previous = switchTask
+        switchTask = Task {
+            await previous?.value
+            guard pendingViewer == id else { return }                   // picked again since
+            guard id != viewers.current else { pendingViewer = nil; return }
             await cloud.flushProfile()
             // the second profile's first add-ons on this device: the cloud's copy, or the first profile's
             await cloud.prepareAddons(for: id)
+            // picked again while it waited, or the profile was removed meanwhile (here or elsewhere)
+            guard pendingViewer == id else { return }
+            pendingViewer = nil
+            guard viewers.list().contains(where: { $0.id == id }) else { return }
             viewers.setCurrent(id)
             progress.reset(); library.reset()
             refreshViewers(); progressChanged(); libraryVersion += 1
             addonsSwitched()
             await cloud.pullAll(force: true)
         }
+    }
+
+    /// Signed in to another account than the one this device's data belonged to: the profiles were reset (Cloud).
+    /// Nothing unlocked carries over, and every page reads the first profile again.
+    private func accountReset() {
+        unlocked = []; pinWrong = 0; pinHoldUntil = .distantPast
+        pendingViewer = nil
+        progress.reset(); library.reset()
+        refreshViewers(); progressChanged(); libraryVersion += 1
+        addonsSwitched()
+    }
+
+    /// A sign-in's first pull has landed: like a launch, the picker asks who is watching when the account has two
+    /// profiles, or when the one this device is on wears a PIN not entered yet.
+    private func signedIn() {
+        refreshViewers()
+        if viewerList.count == 2 || needsPin(viewerOn) { askingWho = true }
     }
     /// Each profile keeps its own add-ons: after a switch everything built from the list reads the new one —
     /// the Add-ons page, Home's rows, Search and Discover, stream lists. (Manifests are cached by address, so they stay.)

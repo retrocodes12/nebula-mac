@@ -17,44 +17,54 @@ public final class AddonStore: @unchecked Sendable {
 
     /// Who's watching: each profile keeps its own add-ons. The first profile's are the old documents ("addons",
     /// "addons_sync"); the second's sit beside them ("addons_b", "addons_sync_b"). Switching profile needs no reset —
-    /// every read goes to the store under the profile this device is on.
+    /// every read goes to the store under the profile this device is on, or under the one a sync step names (`for:`):
+    /// a merge or a push captures the profile with the doc's name and never reads "current" again half-way.
     public var viewers: Viewers?
-    var listKey: String { viewers?.key("addons") ?? "addons" }
-    var syncKey: String { viewers?.key("addons_sync") ?? "addons_sync" }
+    /// The profile this device is on.
+    var here: String { viewers?.current ?? "a" }
+    private func listKey(for viewer: String) -> String { Viewers.key("addons", viewer: viewer) }
+    private func syncKey(for viewer: String) -> String { Viewers.key("addons_sync", viewer: viewer) }
 
-    /// The first time the second profile is used on this device it needs a list of its own. Signed in, the cloud
-    /// decides (`Cloud.prepareAddons`): its own "addons_b" when it has one, else a copy of the first profile's — so
-    /// until it has answered, the second profile reads as empty and nothing is written. Signed out, it starts as the
-    /// copy at once.
-    private func ensureProfile() {
-        guard listKey != "addons" else { return }
+    /// The second profile's list is a PROVISIONAL copy of the first's: made without the cloud saying it has no
+    /// "addons_b" of its own (signed out, the cloud did not answer, or read before anyone asked). Local only, never
+    /// synced. While it stands, a pull that finds the cloud's "addons_b" takes it as it is in place of the copy, and
+    /// one that finds none sends the copy up (Cloud.mergeAddons / pushDocument); a change by hand ends it.
+    public static let seedFlag = "addons_b_seed"
+    public func provisional(for viewer: String) -> Bool { viewer == "b" && store.string(AddonStore.seedFlag) != nil }
+    func settle(for viewer: String) { if viewer == "b" { store.set(AddonStore.seedFlag, nil) } }
+
+    /// The first time the second profile is used on this device it needs a list of its own. Asked before the device
+    /// moves onto it, the cloud decides (`Cloud.prepareAddons`): its own "addons_b" when it has one, else a copy of the
+    /// first profile's. Read before that (signed out, or a device that was already on it), it starts as the copy at
+    /// once — provisional, so that the cloud's own list, when it comes, wins whole.
+    private func ensureProfile(_ viewer: String) {
+        guard viewer == "b" else { return }
         lock.lock(); defer { lock.unlock() }
-        guard store.string(listKey) == nil else { return }
-        let c = store.object("cloud_link")
-        guard c.str("gid").isEmpty || c.str("token").isEmpty else { return }
-        copyFirst()
+        guard store.string(listKey(for: viewer)) == nil else { return }
+        copyFirst(provisional: true)
     }
 
     /// The first profile's list and its stamps as they are — never "now", so a removal synced from another device's
     /// copy still wins the merge. The first profile with nothing gives an empty second.
-    private func copyFirst() {
+    private func copyFirst(provisional: Bool) {
+        store.set(AddonStore.seedFlag, provisional ? "1" : nil)
         store.setObject(syncKey(for: "b"), store.object("addons_sync"))
         store.setObject(listKey(for: "b"), store.object("addons"))
     }
-    private func listKey(for viewer: String) -> String { Viewers.key("addons", viewer: viewer) }
-    private func syncKey(for viewer: String) -> String { Viewers.key("addons_sync", viewer: viewer) }
 
     /// Whether this device holds that profile's own list (the first profile's always counts).
     public func hasList(for viewer: String) -> Bool { viewer != "b" || store.string(listKey(for: viewer)) != nil }
 
-    /// The second profile's first list on this device: a copy of the first's, or empty with no stamps (the cloud's
-    /// copy is adopted by the pull). Nothing when it already has one. True when it wrote. No `onChange`: the pull
-    /// that follows sends a copy up itself, and must not send an empty list over the cloud's.
+    /// The second profile's first list on this device: a copy of the first's (`provisional` when the cloud was not
+    /// asked or did not answer), or empty with no stamps (the cloud's copy is adopted by the pull). Nothing when it
+    /// already has one. True when it wrote. No `onChange`: the pull that follows sends a copy up itself, and must not
+    /// send an empty list over the cloud's.
     @discardableResult
-    public func startList(for viewer: String, copyingFirst: Bool) -> Bool {
+    public func startList(for viewer: String, copyingFirst: Bool, provisional: Bool = false) -> Bool {
         locked {
             guard !hasList(for: viewer) else { return false }
-            if copyingFirst { copyFirst() } else {
+            if copyingFirst { copyFirst(provisional: provisional) } else {
+                store.set(AddonStore.seedFlag, nil)
                 store.setObject(syncKey(for: viewer), [:])
                 store.setObject(listKey(for: viewer), ["list": [Any]()])
             }
@@ -63,7 +73,7 @@ public final class AddonStore: @unchecked Sendable {
     }
 
     /// The stamps written back (a sync merge, a push stamping an unstamped add-on).
-    func saveSync(_ s: JSONObject) { locked { ensureProfile(); store.setObject(syncKey, s) } }
+    func saveSync(_ s: JSONObject, for viewer: String) { locked { ensureProfile(viewer); store.setObject(syncKey(for: viewer), s) } }
 
     /// Run `body` with the add-on documents to itself.
     public func locked<T>(_ body: () throws -> T) rethrows -> T {
@@ -71,9 +81,11 @@ public final class AddonStore: @unchecked Sendable {
         return try body()
     }
 
-    public func all() -> [Addon] {
-        ensureProfile()
-        let doc = store.object(listKey)
+    public func all() -> [Addon] { all(for: here) }
+
+    public func all(for viewer: String) -> [Addon] {
+        ensureProfile(viewer)
+        let doc = store.object(listKey(for: viewer))
         var seen = Set<String>()
         return doc.objs("list").compactMap { o in
             guard let u = o.text("manifestUrl"), seen.insert(u).inserted else { return nil }
@@ -85,25 +97,30 @@ public final class AddonStore: @unchecked Sendable {
     public func active() -> [Addon] { all().filter { $0.enabled } }
 
     /// Write the list without touching the sync stamps (a merge, a seed).
-    public func saveRaw(_ list: [Addon]) {
+    public func saveRaw(_ list: [Addon]) { saveRaw(list, for: here) }
+
+    public func saveRaw(_ list: [Addon], for viewer: String) {
         locked {
-            ensureProfile()
+            ensureProfile(viewer)
             var seen = Set<String>()
             let arr: [JSONObject] = list.filter { seen.insert($0.manifestUrl).inserted }.map {
                 ["manifestUrl": $0.manifestUrl, "name": $0.name, "base": $0.base, "logo": $0.logo ?? "", "enabled": $0.enabled]
             }
-            store.setObject(listKey, ["list": arr])
+            store.setObject(listKey(for: viewer), ["list": arr])
         }
     }
 
-    /// Apply an intent to the current list, never a replacement built from a UI snapshot.
+    /// Apply an intent to the current list, never a replacement built from a UI snapshot. Every caller is a change
+    /// by hand, so a provisional copy (`seedFlag`) becomes the profile's own list.
     @discardableResult
     private func change(_ body: (inout [Addon], inout JSONObject) -> Bool) -> Bool {
-        let changed = locked {
-            var list = all(), s = syncDoc()
+        let changed = locked { () -> Bool in
+            let v = here
+            var list = all(for: v), s = syncDoc(for: v)
             guard body(&list, &s) else { return false }
-            saveSync(s)
-            saveRaw(list)
+            saveSync(s, for: v)
+            saveRaw(list, for: v)
+            settle(for: v)
             return true
         }
         if changed { onChange?() }
@@ -154,9 +171,11 @@ public final class AddonStore: @unchecked Sendable {
         }
     }
 
-    public func syncDoc() -> JSONObject {
-        ensureProfile()
-        var s = store.object(syncKey)
+    public func syncDoc() -> JSONObject { syncDoc(for: here) }
+
+    public func syncDoc(for viewer: String) -> JSONObject {
+        ensureProfile(viewer)
+        var s = store.object(syncKey(for: viewer))
         if s["at"] == nil { s["at"] = JSONObject() }
         if s["removed"] == nil { s["removed"] = JSONObject() }
         return s
@@ -171,13 +190,14 @@ public final class AddonStore: @unchecked Sendable {
         guard !flags.bool("v1") else { return }
         flags["v1"] = true
         store.setObject("seeded", flags)
-        guard all().isEmpty else { return }
-        saveRaw([AddonStore.cinemeta, AddonStore.openSubtitles])
-        var s = syncDoc()
+        let v = here
+        guard all(for: v).isEmpty else { return }
+        saveRaw([AddonStore.cinemeta, AddonStore.openSubtitles], for: v)
+        var s = syncDoc(for: v)
         var at = s.obj("at") ?? [:]
         at[AddonStore.cinemeta.manifestUrl] = 1
         at[AddonStore.openSubtitles.manifestUrl] = 1
         s["at"] = at
-        saveSync(s)
+        saveSync(s, for: v)
     }
 }

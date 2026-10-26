@@ -100,6 +100,16 @@ public final class Viewers: @unchecked Sendable {
         store.setObject("viewers_v1", ["at": nowMs(), "list": arr])
     }
 
+    /// The second profile's documents on this device (its history, My List, add-ons and their stamps, the
+    /// provisional-copy mark) — gone when the device is signed in to another account (Cloud.adopt).
+    public static let secondKeys = ["progress_b", "library_b", "addons_b", "addons_sync_b", AddonStore.seedFlag]
+
+    /// Another account on this device: back on the first profile, and no list (stamped 0, so the account's wins).
+    public func forgetAccount() {
+        setCurrent("a")
+        store.setObject("viewers_v1", ["at": 0, "list": [Any]()])
+    }
+
     /// The synced list: newest wins. (A second profile removed elsewhere: the caller moves this device back to the first.)
     public func merge(_ remote: JSONObject) -> (changed: Bool, localNewer: Bool) {
         let ra = remote.int64("at"), la = doc().int64("at")

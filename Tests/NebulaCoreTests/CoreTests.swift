@@ -744,8 +744,16 @@ final class FakeCloud: Transport, @unchecked Sendable {
     var tokens = Set<String>()
     var log: [String] = []
     var lastDevice: JSONObject?
+    /// The account a sign-in lands on (another one for the account-change tests).
+    var gid = "g1"
+    /// No way out: every request fails as it would offline.
+    var down = false
 
-    func send(_ request: URLRequest) async throws -> (Data, Int) { handle(request) }
+    func send(_ request: URLRequest) async throws -> (Data, Int) {
+        lock.lock(); let offline = down; lock.unlock()
+        if offline { throw URLError(.notConnectedToInternet) }
+        return handle(request)
+    }
 
     func handle(_ request: URLRequest) -> (Data, Int) {
         lock.lock(); defer { lock.unlock() }
@@ -758,10 +766,10 @@ final class FakeCloud: Transport, @unchecked Sendable {
             lastDevice = body.obj("device")
             if body.str("password") != "correct horse" { return reply(403, ["error": "wrong handle or password"]) }
             let t = "tok\(tokens.count)"; tokens.insert(t)
-            return reply(200, ["gid": "g1", "token": t, "profile": ["handle": body.str("handle"), "name": "Sohil", "avatar": "#E50914"] as JSONObject])
+            return reply(200, ["gid": gid, "token": t, "profile": ["handle": body.str("handle"), "name": "Sohil", "avatar": "#E50914"] as JSONObject])
         }
         let auth = request.value(forHTTPHeaderField: "Authorization") ?? ""
-        guard auth.hasPrefix("Bearer g1."), tokens.contains(String(auth.dropFirst("Bearer g1.".count))) else { return reply(401, ["error": "unauthorized"]) }
+        guard auth.hasPrefix("Bearer \(gid)."), tokens.contains(String(auth.dropFirst("Bearer \(gid).".count))) else { return reply(401, ["error": "unauthorized"]) }
         if path == "/v1/kv" {
             var keys: JSONObject = [:]
             for (k, r) in kv { keys[k] = ["rev": r.rev, "at": 1] as JSONObject }

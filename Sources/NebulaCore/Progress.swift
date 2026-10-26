@@ -69,6 +69,9 @@ public final class ProgressStore: @unchecked Sendable {
     /// Held across a whole read-change-write (`mutate`).
     private let writeLock = NSLock()
     private var cache: [String: ProgressRec]?
+    /// The document `cache` was read from. A profile can change on another thread (a removal synced in moves the
+    /// device to the first profile on the cloud's): a cache read under the other profile's name is never used.
+    private var cacheKey: String?
     public var onChange: (() -> Void)?
     /// Add-ons switched off in the list; their titles stay out of Continue watching.
     public var disabledAddons: () -> Set<String> = { [] }
@@ -79,19 +82,25 @@ public final class ProgressStore: @unchecked Sendable {
     public init(store: Store) { self.store = store }
 
     private var storeKey: String { viewers?.key("progress") ?? "progress" }
+    /// That profile's document name ("a" or "b"); nil = the profile this device is on.
+    private func keyFor(_ viewer: String?) -> String { viewer.map { Viewers.key("progress", viewer: $0) } ?? storeKey }
     /// The other profile's history from now on: read again on the next ask.
-    public func reset() { lock.lock(); cache = nil; lock.unlock() }
+    public func reset() { lock.lock(); cache = nil; cacheKey = nil; lock.unlock() }
 
     public static func key(_ type: String, _ id: String) -> String { "\(type):\(id)" }
 
-    public func all() -> [String: ProgressRec] {
+    public func all() -> [String: ProgressRec] { all(storeKey) }
+    /// One profile's history, whichever this device is on (sync reads the profile it captured with the doc's name).
+    public func all(for viewer: String) -> [String: ProgressRec] { all(keyFor(viewer)) }
+
+    private func all(_ key: String) -> [String: ProgressRec] {
         lock.lock(); defer { lock.unlock() }
-        if let c = cache { return c }
+        if let c = cache, cacheKey == key { return c }
         var m: [String: ProgressRec] = [:]
-        for (k, v) in store.object(storeKey) {
+        for (k, v) in store.object(key) {
             if let o = v as? JSONObject, let r = ProgressRec(wire: o) { m[k] = r }
         }
-        cache = m
+        cache = m; cacheKey = key
         return m
     }
 
@@ -99,16 +108,19 @@ public final class ProgressStore: @unchecked Sendable {
     /// the same moment on different threads; each used to read its own copy, and the last write
     /// threw away what the others had just written. `body` says whether it changed anything;
     /// only then is the store written and, with `notify`, the change announced (for sync).
-    public func mutate(notify: Bool = true, _ body: (inout [String: ProgressRec]) -> Bool) {
+    /// `viewer`: that profile's history (a sync merge); nil = the profile this device is on. The name is read
+    /// once, so the read and the write are always the same profile's.
+    public func mutate(viewer: String? = nil, notify: Bool = true, _ body: (inout [String: ProgressRec]) -> Bool) {
         writeLock.lock()
-        var m = all()
+        let key = keyFor(viewer)
+        var m = all(key)
         let changed = body(&m)
-        if changed { persist(m) }
+        if changed { persist(m, key) }
         writeLock.unlock()
         if changed && notify { onChange?() }
     }
 
-    private func persist(_ input: [String: ProgressRec]) {
+    private func persist(_ input: [String: ProgressRec], _ key: String) {
         var m = input
         if m.count > ProgressStore.maxRecords {
             // What dies first matters. A mark carries `at = now`, so a season ticked off by hand
@@ -126,10 +138,10 @@ public final class ProgressStore: @unchecked Sendable {
             }.prefix(m.count - ProgressStore.maxRecords)
             for d in doomed { m[d.key] = nil }
         }
-        lock.lock(); cache = m; lock.unlock()
+        lock.lock(); cache = m; cacheKey = key; lock.unlock()
         var o: JSONObject = [:]
         for (k, r) in m { o[k] = r.wire }
-        store.setObject(storeKey, o)
+        store.setObject(key, o)
     }
 
     public func get(_ type: String, _ id: String) -> ProgressRec? { all()[ProgressStore.key(type, id)] }
@@ -201,9 +213,9 @@ public final class ProgressStore: @unchecked Sendable {
     /// Replace the whole store after a sync merge (no re-push side effects).
     public func replaceAll(_ m: [String: ProgressRec]) { mutate(notify: false) { $0 = m; return true } }
 
-    public func wireDoc() -> JSONObject {
+    public func wireDoc(for viewer: String? = nil) -> JSONObject {
         var o: JSONObject = [:]
-        for (k, r) in all() { o[k] = r.wire }
+        for (k, r) in all(keyFor(viewer)) { o[k] = r.wire }
         return o
     }
 

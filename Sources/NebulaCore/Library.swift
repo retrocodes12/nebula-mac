@@ -22,6 +22,8 @@ public final class LibraryStore: @unchecked Sendable {
     /// The document, parsed once (like ProgressStore's). Every card asks whether its title is
     /// saved each time it draws, and each ask parsed the whole file; only `mutate` writes it.
     private var cache: JSONObject?
+    /// The document `cache` was read from — never used under the other profile's name (ProgressStore says why).
+    private var cacheKey: String?
     private let lock = NSLock()
 
     /// Whose list this is (Viewers.swift): the second profile's lives under its own name.
@@ -30,28 +32,35 @@ public final class LibraryStore: @unchecked Sendable {
     public init(store: Store) { self.store = store }
 
     private var storeKey: String { viewers?.key("library") ?? "library" }
+    /// That profile's document name ("a" or "b"); nil = the profile this device is on.
+    private func keyFor(_ viewer: String?) -> String { viewer.map { Viewers.key("library", viewer: $0) } ?? storeKey }
     /// The other profile's list from now on: read again on the next ask.
-    public func reset() { lock.lock(); cache = nil; lock.unlock() }
+    public func reset() { lock.lock(); cache = nil; cacheKey = nil; lock.unlock() }
 
-    public func doc() -> JSONObject {
+    public func doc() -> JSONObject { doc(storeKey) }
+    /// One profile's list, whichever this device is on.
+    public func doc(for viewer: String) -> JSONObject { doc(keyFor(viewer)) }
+
+    private func doc(_ key: String) -> JSONObject {
         lock.lock(); defer { lock.unlock() }
-        if let c = cache { return c }
-        let o = store.object(storeKey)
-        cache = o
+        if let c = cache, cacheKey == key { return c }
+        let o = store.object(key)
+        cache = o; cacheKey = key
         return o
     }
 
     public func replaceAll(_ o: JSONObject) { mutate(notify: false) { $0 = o; return true } }
 
     /// Read, change and write My List as one step, so a sync merge and a + pressed at the same
-    /// moment cannot write over each other (ProgressStore.mutate says more).
-    public func mutate(notify: Bool = true, _ body: (inout JSONObject) -> Bool) {
+    /// moment cannot write over each other (ProgressStore.mutate says more). `viewer` as there.
+    public func mutate(viewer: String? = nil, notify: Bool = true, _ body: (inout JSONObject) -> Bool) {
         writeLock.lock()
-        var o = doc()
+        let key = keyFor(viewer)
+        var o = doc(key)
         let changed = body(&o)
         if changed {
-            lock.lock(); cache = o; lock.unlock()
-            store.setObject(storeKey, o)
+            lock.lock(); cache = o; cacheKey = key; lock.unlock()
+            store.setObject(key, o)
         }
         writeLock.unlock()
         if changed && notify { onChange?() }

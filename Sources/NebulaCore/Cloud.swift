@@ -95,7 +95,9 @@ public struct DeviceRec: Equatable, Identifiable, Sendable {
 /// them, so they pass through untouched.
 public actor Cloud {
     public static let defaultBase = "https://play.rifflehq.in/cloud"
-    static let syncKeys = ["addons", "progress", "library", "sub_style", "seekr", "viewers"]
+    /// `viewers` first: a second profile removed elsewhere moves this device to the first before any per-profile
+    /// name is worked out for the rest of the pull.
+    static let syncKeys = ["viewers", "addons", "progress", "library", "sub_style", "seekr"]
 
     let base: String
     let store: Store
@@ -112,7 +114,7 @@ public actor Cloud {
     private var writes: [String: (id: UUID, task: Task<Void, Never>)] = [:]
     private var requests: [UUID: Task<(Data, Int), Error>] = [:]
     private var generation: UInt64 = 0
-    /// How many times each key has changed. A push only clears the dirty mark when nothing
+    /// How many times each doc (by its wire name) has changed. A push only clears the dirty mark when nothing
     /// changed while it was on the wire — otherwise that change was never sent and a flush at
     /// quit would find nothing to send.
     private var changes: [String: Int] = [:]
@@ -124,6 +126,10 @@ public actor Cloud {
     /// A signed request came back 401 — the token was revoked elsewhere.
     public var onSignedOut: (@Sendable () -> Void)?
     public var onProfile: (@Sendable (Profile?) -> Void)?
+    /// A sign-in to another account than the one this device's synced data belongs to: the profiles were reset.
+    public var onAccountReset: (@Sendable () -> Void)?
+    /// A sign-in's first pull has landed (the account's profiles are known now).
+    public var onSignedIn: (@Sendable () -> Void)?
 
     public init(store: Store, addons: AddonStore, progress: ProgressStore, library: LibraryStore,
                 transport: Transport = URLSessionTransport(), base: String = Cloud.defaultBase, deviceName: String = "Mac",
@@ -131,14 +137,30 @@ public actor Cloud {
         self.store = store; self.addons = addons; self.progress = progress; self.library = library
         self.transport = transport; self.base = base; self.deviceName = deviceName; self.platform = platform
         self.viewers = viewers
+        Cloud.noteSyncGid(store)
+    }
+
+    /// The account this device's synced data belongs to (`sync_gid`, local only). Set by every adopt; a device
+    /// signed in before it existed takes its current account's at launch.
+    static let syncGidKey = "sync_gid"
+    private static func noteSyncGid(_ store: Store) {
+        let c = store.object("cloud_link")
+        guard store.string(syncGidKey) == nil, !c.str("gid").isEmpty, !c.str("token").isEmpty else { return }
+        store.set(syncGidKey, c.str("gid"))
     }
 
     /// Who's watching (Viewers.swift): a per-profile key goes up and comes down under the profile's own name.
     let viewers: Viewers?
-    private func wire(_ key: String) -> String { viewers?.key(key) ?? key }
+    /// The profile this device is on. Every sync step reads it ONCE, with the doc's wire name, and hands that
+    /// profile to the stores — so a switch half-way (on the main thread, or a removal merged here) can never put one
+    /// profile's doc under the other's name, nor merge a fetched doc into the other's store.
+    private var here: String { viewers?.current ?? "a" }
+    private func wire(_ key: String, _ viewer: String) -> String { Viewers.key(key, viewer: viewer) }
 
-    public func setHandlers(onApplied: (@Sendable (Set<String>) -> Void)?, onSignedOut: (@Sendable () -> Void)?, onProfile: (@Sendable (Profile?) -> Void)?) {
+    public func setHandlers(onApplied: (@Sendable (Set<String>) -> Void)?, onSignedOut: (@Sendable () -> Void)?, onProfile: (@Sendable (Profile?) -> Void)?,
+                            onAccountReset: (@Sendable () -> Void)? = nil, onSignedIn: (@Sendable () -> Void)? = nil) {
         self.onApplied = onApplied; self.onSignedOut = onSignedOut; self.onProfile = onProfile
+        self.onAccountReset = onAccountReset; self.onSignedIn = onSignedIn
     }
 
     // MARK: credential
@@ -228,21 +250,38 @@ public actor Cloud {
     func adopt(_ r: JSONObject, fresh: Bool) async {
         switchSession()
         let session = generation
-        store.setObject("cloud_link", ["gid": r.str("gid"), "token": r.str("token")])
+        let gid = r.str("gid")
+        // another account than the one this device's synced data belongs to (a fresh profile always is): its
+        // profiles must not carry over — nor the second one's history and add-ons. The first profile's own data
+        // merges as it always did.
+        if let was = store.string(Cloud.syncGidKey), !was.isEmpty, was != gid { resetProfiles() }
+        store.set(Cloud.syncGidKey, gid)
+        store.setObject("cloud_link", ["gid": gid, "token": r.str("token")])
         store.setObject("cloud_revs", [:])
         store.setObject("cloud_dirty", [:])
         setProfile(r.obj("profile"))
         lastPullAt = 0
         if fresh {
             // a brand-new profile: what this device holds IS the profile's data
-            for k in Cloud.syncKeys where hasContent(k) {
+            let v = here
+            for k in Cloud.syncKeys where hasContent(k, viewer: v) {
                 guard current(session) else { return }
-                await pushKey(k, session: session)
+                await pushKey(k, viewer: v, session: session)
             }
         } else {
             // merge; newer local records push back on their own
             await pullAll(force: true)
+            if current(session) { onSignedIn?() }
         }
+    }
+
+    /// Back to one profile with nothing of the other account's: the first profile, no list, and the second's
+    /// documents gone from this device (`Viewers.secondKeys`). The caller clears the dirty marks and revisions.
+    private func resetProfiles() {
+        viewers?.forgetAccount()
+        for k in Viewers.secondKeys { store.set(k, nil) }
+        progress.reset(); library.reset()
+        onAccountReset?()
     }
 
     /// Forget the credential on this device only; nothing local is deleted.
@@ -263,18 +302,20 @@ public actor Cloud {
     // MARK: push
 
     /// Mark a key changed and schedule a debounced push. Safe to call constantly.
-    public func noteChanged(_ key: String) {
+    /// `viewer`: the profile whose doc changed, read where the change was made (nil = the one this device is on).
+    public func noteChanged(_ key: String, viewer: String? = nil) {
         guard linked, !applying else { return }
-        changes[key, default: 0] += 1
-        var d = store.object("cloud_dirty"); d[wire(key)] = 1
+        let v = viewer ?? here, wk = wire(key, v)
+        changes[wk, default: 0] += 1
+        var d = store.object("cloud_dirty"); d[wk] = 1
         store.setObject("cloud_dirty", d)
-        pushTasks[key]?.cancel()
+        pushTasks[wk]?.cancel()
         let wait: UInt64 = key == "progress" ? 20_000_000_000 : 2_000_000_000   // progress churns every few seconds
         let session = generation
-        pushTasks[key] = Task { [weak self] in
+        pushTasks[wk] = Task { [weak self] in
             try? await Task.sleep(nanoseconds: wait)
             guard let self = self, await self.current(session) else { return }
-            await self.pushKey(key, session: session)
+            await self.pushKey(key, viewer: v, session: session)
         }
     }
 
@@ -284,68 +325,75 @@ public actor Cloud {
         let session = generation
         for wk in store.object("cloud_dirty").keys {
             guard current(session) else { return }
-            let k = wk.hasSuffix("_b") ? String(wk.dropLast(2)) : wk
-            guard wire(k) == wk else { continue }      // the other profile's: it goes up when that profile is on
-            pushTasks[k]?.cancel()
-            await pushKey(k, session: session)
+            // either profile's: each goes up under its own name, whichever this device is on now
+            let b = wk.hasSuffix("_b")
+            let k = b ? String(wk.dropLast(2)) : wk, v = b ? "b" : "a"
+            guard Cloud.syncKeys.contains(k), wire(k, v) == wk else { continue }
+            pushTasks[wk]?.cancel()
+            await pushKey(k, viewer: v, session: session)
         }
     }
 
     /// Before a switch of profile: this profile's history and add-ons go up under their own names now.
     public func flushProfile() async {
         guard linked else { return }
-        let session = generation
-        for k in ["addons", "progress", "library"] where store.object("cloud_dirty")[wire(k)] != nil {
-            pushTasks[k]?.cancel()
-            await pushKey(k, session: session)
+        let session = generation, v = here
+        for k in ["addons", "progress", "library"] where store.object("cloud_dirty")[wire(k, v)] != nil {
+            pushTasks[wire(k, v)]?.cancel()
+            await pushKey(k, viewer: v, session: session)
         }
     }
 
-    private func pushKey(_ key: String, session: UInt64) async {
+    private func pushKey(_ key: String, viewer v: String, session: UInt64) async {
         guard current(session), linked else { return }
-        let previous = writes[key]?.task, id = UUID()
+        let wk = wire(key, v)
+        let previous = writes[wk]?.task, id = UUID()
         let task = Task<Void, Never> { [weak self] in
             if let previous = previous { await previous.value }
-            await self?.pushDocument(key, session: session)
+            await self?.pushDocument(key, viewer: v, session: session)
         }
-        writes[key] = (id, task)
+        writes[wk] = (id, task)
         await task.value
         guard current(session) else { return }
-        if writes[key]?.id == id { writes[key] = nil }
+        if writes[wk]?.id == id { writes[wk] = nil }
     }
 
-    private func pushDocument(_ key: String, session: UInt64) async {
-        let wk = wire(key)
+    /// `v`'s doc goes up under `v`'s name — both fixed here, so a switch while it is on the wire changes neither.
+    private func pushDocument(_ key: String, viewer v: String, session: UInt64) async {
+        let wk = wire(key, v)
         guard current(session), linked,
               let keys = (try? await api("GET", "/v1/kv"))?.obj("keys"), current(session) else { return }
-        if let meta = keys.obj(wk), store.object("cloud_revs").optInt(wk) != meta.int("rev") {
-            guard let rec = try? await api("GET", "/v1/kv/\(wk)"), current(session), wire(key) == wk,
+        // a provisional copy of the first profile's add-ons is never sent over the cloud's own list: fetched always
+        let seed = key == "addons" && addons.provisional(for: v)
+        if let meta = keys.obj(wk), seed || store.object("cloud_revs").optInt(wk) != meta.int("rev") {
+            guard let rec = try? await api("GET", "/v1/kv/\(wk)"), current(session),
                   let remote = JSON.object(rec.str("v")) else { return }
             applying = true
-            let (changed, _) = merge(key, remote)
+            let (changed, _) = merge(key, remote, viewer: v)
             applying = false
             var revs = store.object("cloud_revs"); revs[wk] = rec.int("rev")
             store.setObject("cloud_revs", revs)
-            if changed { onApplied?([key]) }
+            if changed && v == here { onApplied?([key]) }
         }
-        let seen = changes[key, default: 0]
-        // the doc and the name it goes under belong to one profile: a switch in between sends nothing
-        guard current(session), wire(key) == wk, let v = docFor(key) else { return }
+        let seen = changes[wk, default: 0]
+        guard current(session), let doc = docFor(key, viewer: v) else { return }
         // Fetch/merge narrows the race; only a server-side conditional PUT can make it atomic.
-        guard let r = try? await api("PUT", "/v1/kv/\(wk)", ["v": v]), current(session) else { return }
+        guard let r = try? await api("PUT", "/v1/kv/\(wk)", ["v": doc]), current(session) else { return }
         var revs = store.object("cloud_revs"); revs[wk] = r.int("rev")
         store.setObject("cloud_revs", revs)
+        // the cloud holds this list now: it is the profile's own, provisional or not
+        if key == "addons" { addons.settle(for: v) }
         // the actor let other calls in during the PUT: a change made then is still unsent
-        guard changes[key, default: 0] == seen else { return }
+        guard changes[wk, default: 0] == seen else { return }
         var d = store.object("cloud_dirty"); d[wk] = nil
         store.setObject("cloud_dirty", d)
     }
 
-    private func hasContent(_ key: String) -> Bool {
+    private func hasContent(_ key: String, viewer v: String) -> Bool {
         switch key {
-        case "addons": return !addons.all().isEmpty || !(addons.syncDoc().obj("removed") ?? [:]).isEmpty
-        case "progress": return !progress.all().isEmpty
-        case "library": return !library.doc().isEmpty
+        case "addons": return !addons.all(for: v).isEmpty || !(addons.syncDoc(for: v).obj("removed") ?? [:]).isEmpty
+        case "progress": return !progress.all(for: v).isEmpty
+        case "library": return !library.doc(for: v).isEmpty
         case "sub_style": return store.object("sub_style").int64("at") > 0
         case "seekr": return store.object("seekr_v1").int64("at") > 0
         case "viewers": return (viewers?.doc().int64("at") ?? 0) > 0
@@ -364,39 +412,45 @@ public actor Cloud {
         var applied = Set<String>()
         let got = (try? await api("GET", "/v1/kv"))?.obj("keys")
         guard current(session) else { return }
-        // the second profile's first list on this device is decided before anything is merged into it
-        if let v = viewers, startAddons(for: v.current, keys: got) { applied.insert("addons") }
         guard let keys = got else {
+            // no key list: the second profile's first list on this device is a provisional copy
+            if viewers != nil, startAddons(for: here, keys: nil) { applied.insert("addons") }
             if !applied.isEmpty { onApplied?(applied) }
             return
         }
         for key in Cloud.syncKeys {
             guard current(session) else { return }
-            let wk = wire(key)                              // this profile's copy of a per-profile key
+            // read after `viewers` merged: a removal elsewhere has moved this device to the first profile by now
+            let v = here, wk = wire(key, v)
+            // the second profile's first list on this device is decided before anything is merged into it
+            if key == "addons", viewers != nil, startAddons(for: v, keys: keys) { applied.insert("addons") }
+            let seed = key == "addons" && addons.provisional(for: v)
             guard let meta = keys.obj(wk) else {
-                if hasContent(key) { await pushKey(key, session: session) }
+                if hasContent(key, viewer: v) { await pushKey(key, viewer: v, session: session) }
+                else if seed { addons.settle(for: v) }      // nothing to send, and nothing in the cloud to wait for
                 continue
             }
-            if store.object("cloud_revs").optInt(wk) == meta.int("rev") {
-                if store.object("cloud_dirty")[wk] != nil { await pushKey(key, session: session) }
+            if !seed && store.object("cloud_revs").optInt(wk) == meta.int("rev") {
+                if store.object("cloud_dirty")[wk] != nil { await pushKey(key, viewer: v, session: session) }
                 continue
             }
-            guard let rec = try? await api("GET", "/v1/kv/\(wk)"), current(session), wire(key) == wk,
+            guard let rec = try? await api("GET", "/v1/kv/\(wk)"), current(session),
                   let remote = JSON.object(rec.str("v")) else { continue }
             applying = true
-            let (changed, localNewer) = merge(key, remote)
+            let (changed, localNewer) = merge(key, remote, viewer: v)
             applying = false
             var revs = store.object("cloud_revs"); revs[wk] = rec.int("rev")
             store.setObject("cloud_revs", revs)
-            if changed { applied.insert(key) }
-            if localNewer { await pushKey(key, session: session) }
+            if changed && v == here { applied.insert(key) }
+            if localNewer { await pushKey(key, viewer: v, session: session) }
         }
         if current(session), !applied.isEmpty { onApplied?(applied) }
     }
 
     /// Who's watching: the first time the second profile is used on this device. When the cloud already holds its
-    /// add-ons ("addons_b"), it starts empty and the pull adopts the cloud's list as it is; when the cloud has none —
-    /// or this device is signed out, or the cloud did not answer — it starts as a copy of the first profile's.
+    /// add-ons ("addons_b"), it starts empty and the pull adopts the cloud's list as it is; when the cloud says it has
+    /// none, it starts as a copy of the first profile's; signed out, or the cloud did not answer, it starts as that
+    /// copy PROVISIONALLY (AddonStore.seedFlag) — the cloud's own list, once seen, replaces it whole.
     /// Call before the device moves onto that profile, so nothing reads it first.
     public func prepareAddons(for viewer: String) async {
         guard !addons.hasList(for: viewer) else { return }
@@ -411,7 +465,7 @@ public actor Cloud {
         guard !addons.hasList(for: viewer) else { return false }
         let wk = Viewers.key("addons", viewer: viewer)
         let cloudHas = keys?.obj(wk) != nil
-        guard addons.startList(for: viewer, copyingFirst: !cloudHas) else { return false }
+        guard addons.startList(for: viewer, copyingFirst: !cloudHas, provisional: keys == nil) else { return false }
         if cloudHas {
             // fetch the cloud's copy whatever this device last remembered of it
             var revs = store.object("cloud_revs"); revs[wk] = nil
@@ -420,11 +474,13 @@ public actor Cloud {
         return true
     }
 
-    func merge(_ key: String, _ remote: JSONObject) -> (changed: Bool, localNewer: Bool) {
+    /// `viewer`: whose per-profile store takes it — the profile captured with the doc's name (nil = this one).
+    func merge(_ key: String, _ remote: JSONObject, viewer: String? = nil) -> (changed: Bool, localNewer: Bool) {
+        let v = viewer ?? here
         switch key {
-        case "addons": return mergeAddons(remote)
-        case "progress": return mergeProgress(remote)
-        case "library": return mergeLibrary(remote)
+        case "addons": return mergeAddons(remote, v)
+        case "progress": return mergeProgress(remote, v)
+        case "library": return mergeLibrary(remote, v)
         case "sub_style": return mergeSubStyle(remote)
         case "seekr": return mergeSeekr(remote)
         case "viewers": return viewers?.merge(remote) ?? (false, false)
@@ -434,26 +490,27 @@ public actor Cloud {
 
     // MARK: wire docs
 
-    func docFor(_ key: String) -> String? {
+    func docFor(_ key: String, viewer: String? = nil) -> String? {
+        let v = viewer ?? here
         switch key {
         case "addons":
             return addons.locked { () -> String in
-                var s = addons.syncDoc()
+                var s = addons.syncDoc(for: v)
                 var at = s.obj("at") ?? [:]
                 var stamped = false
                 var list: JSONObject = [:]
-                let all = addons.all()
+                let all = addons.all(for: v)
                 for a in all {
                     // an add-on with no stamp can never be adopted by a newest-wins merge — stamp it now
                     if at.int64(a.manifestUrl) == 0 { at[a.manifestUrl] = nowMs(); stamped = true }
                     list[a.manifestUrl] = ["name": a.name, "base": a.base, "logo": a.logo ?? "", "at": at.int64(a.manifestUrl)] as JSONObject
                 }
-                if stamped { s["at"] = at; addons.saveSync(s) }
+                if stamped { s["at"] = at; addons.saveSync(s, for: v) }
                 // the list is keyed by address and carries no order of its own — rank travels beside it
                 return JSON.text(["list": list, "removed": s.obj("removed") ?? [:], "order": all.map(\.manifestUrl), "orderAt": s.int64("orderAt")] as JSONObject)
             }
-        case "progress": return JSON.text(progress.wireDoc())
-        case "library": return JSON.text(library.doc())
+        case "progress": return JSON.text(progress.wireDoc(for: v))
+        case "library": return JSON.text(library.doc(for: v))
         case "sub_style":
             let l = store.object("sub_style")
             return JSON.text(["style": SubStyle.normalize(l.obj("style")), "at": l.int64("at")] as JSONObject)
@@ -465,15 +522,18 @@ public actor Cloud {
         }
     }
 
-    private func mergeAddons(_ remote: JSONObject) -> (Bool, Bool) {
-        addons.locked { mergeAddonsLocked(remote) }
+    private func mergeAddons(_ remote: JSONObject, _ v: String) -> (Bool, Bool) {
+        addons.locked { mergeAddonsLocked(remote, v) }
     }
 
-    private func mergeAddonsLocked(_ remote: JSONObject) -> (Bool, Bool) {
-        var s = addons.syncDoc()
+    private func mergeAddonsLocked(_ remote: JSONObject, _ v: String) -> (Bool, Bool) {
+        // a provisional copy of the first profile's list gives way whole: the cloud's is merged into nothing, so
+        // none of the first profile's add-ons can reach the second's real list
+        let seed = addons.provisional(for: v)
+        var s = seed ? JSONObject() : addons.syncDoc(for: v)
         var at = s.obj("at") ?? [:], removed = s.obj("removed") ?? [:]
-        var arr = addons.all()
-        var changed = false, localNewer = false
+        var arr = seed ? [] : addons.all(for: v)
+        var changed = seed, localNewer = false
         let rl = remote.obj("list") ?? [:], rr = remote.obj("removed") ?? [:]
         let have = Set(arr.map(\.manifestUrl))
         // Keep removals even for an add-on this device has never installed.
@@ -523,16 +583,17 @@ public actor Cloud {
             if next != arr { arr = next; changed = true }
         } else if s.int64("orderAt") > roAt { localNewer = true }
         s["at"] = at; s["removed"] = removed
-        addons.saveSync(s)
-        if changed { addons.saveRaw(arr) }
+        addons.saveSync(s, for: v)
+        if changed { addons.saveRaw(arr, for: v) }
+        if seed { addons.settle(for: v) }
         return (changed, localNewer)
     }
 
     /// Merged inside the store's own write step, so a resume point the player writes while
     /// the merge runs is not overwritten by the merge's older copy.
-    private func mergeProgress(_ remote: JSONObject) -> (Bool, Bool) {
+    private func mergeProgress(_ remote: JSONObject, _ v: String) -> (Bool, Bool) {
         var changed = false, localNewer = false
-        progress.mutate(notify: false) { local in
+        progress.mutate(viewer: v, notify: false) { local in
             for (k, v) in remote {
                 guard let r = v as? JSONObject, let rec = ProgressRec(wire: r) else { continue }
                 if let l = local[k], l.at >= rec.at { continue }
@@ -569,9 +630,9 @@ public actor Cloud {
         return (false, lAt > r.at)
     }
 
-    private func mergeLibrary(_ remote: JSONObject) -> (Bool, Bool) {
+    private func mergeLibrary(_ remote: JSONObject, _ v: String) -> (Bool, Bool) {
         var changed = false, localNewer = false
-        library.mutate(notify: false) { local in
+        library.mutate(viewer: v, notify: false) { local in
             for (k, v) in remote {
                 guard let r = v as? JSONObject else { continue }
                 if let l = local.obj(k), l.int64("at") >= r.int64("at") { continue }
