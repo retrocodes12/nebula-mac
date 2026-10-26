@@ -331,7 +331,7 @@ final class ViewersTests: XCTestCase {
         let signedIn = HitCount()
         await cloud.setHandlers(onApplied: nil, onSignedOut: nil, onProfile: nil, onAccountReset: nil, onSignedIn: { signedIn.n += 1 })
         await cloud.forget()
-        let err = await cloud.signIn(handle: "me", password: "correct horse")
+        let err = await cloud.signIn(handle: "mine", password: "correct horse")
         XCTAssertNil(err)
         XCTAssertEqual(signedIn.n, 1, "the app is told once the sign-in's pull has landed")
         XCTAssertEqual(v.current, "b")
