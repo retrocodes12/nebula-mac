@@ -746,7 +746,8 @@ final class AppModel: ObservableObject {
                     guard m.stream.has, a.manifestUrl == t.addonUrl || m.canStream(t.type, t.id) else { return (a, false, [], []) }
                     // the page names who it is still waiting for
                     if let ask = onAsking { await MainActor.run { ask(a) } }
-                    guard let s = try? await stremio.loadStreams(base: a.base, type: t.type, id: t.id) else { return (a, true, nil, []) }
+                    // a request that failed for a passing reason is asked once more after 2 s; its waiting row stays up meanwhile
+                    guard let s = try? await stremio.loadStreamsAskingTwice(base: a.base, type: t.type, id: t.id) else { return (a, true, nil, []) }
                     // each row's words are read here, on this task's own thread, once — not by
                     // the main thread every time the row is drawn
                     return (a, true, s, s.map { StreamRowText($0, addonName: a.name) })

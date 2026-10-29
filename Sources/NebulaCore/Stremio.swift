@@ -230,6 +230,33 @@ public struct Stremio: Sendable {
         Stremio.parseStreams(try await getJSON("\(base)/stream/\(Stremio.enc(type))/\(Stremio.enc(id)).json"))
     }
 
+    /// The streams page's request: one that failed for a reason that may pass (`worthAskingAgain`) is asked once more
+    /// after `pause` (2 s) before the add-on counts as not answering; a 404, a bad answer or a cancel is final at once.
+    public func loadStreamsAskingTwice(base: String, type: String, id: String,
+                                       pause: UInt64 = 2_000_000_000) async throws -> [StreamItem] {
+        do {
+            return try await loadStreams(base: base, type: type, id: id)
+        } catch {
+            guard Stremio.worthAskingAgain(error), !Task.isCancelled else { throw error }
+            try await Task.sleep(nanoseconds: pause)
+            return try await loadStreams(base: base, type: type, id: id)
+        }
+    }
+
+    /// A failure that a second ask may get past: the network (no answer, a dropped or timed-out connection), a server
+    /// error (5xx), 408 or 429. Not a 404 or another 4xx (the add-on said no), not an answer that was no JSON, not a
+    /// cancel (the page went).
+    public static func worthAskingAgain(_ e: Error) -> Bool {
+        if e is CancellationError { return false }
+        if let h = e as? HTTPFailure { return h.code == 0 || h.code >= 500 || h.code == 408 || h.code == 429 }
+        if let u = e as? URLError {
+            let final: [URLError.Code] = [.cancelled, .badURL, .unsupportedURL]
+            return !final.contains(u.code)
+        }
+        let n = e as NSError
+        return n.domain == NSURLErrorDomain && n.code != NSURLErrorCancelled
+    }
+
     /// A web address. An add-on's (or a hand-off link's) stream and subtitle addresses are played by an engine that also
     /// opens file: and other schemes, so anything but http(s) is dropped where it comes in (2026-09-24).
     public static func isWeb(_ u: String) -> Bool {
