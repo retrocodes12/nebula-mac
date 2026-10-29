@@ -176,13 +176,23 @@ final class MPVController: ObservableObject {
     func toggleMute() { setFlag("mute", !muted) }
     func setSpeed(_ s: Double) { setDouble("speed", s) }
 
-    /// Night mode: loud scenes brought down and quiet speech brought up — one fixed chain (a gentle compressor, then a
-    /// slow loudness leveller), set and cleared by a switch; nothing typed by anyone ever reaches the engine's filters.
-    static let nightFilter = "lavfi=[acompressor=threshold=0.063:ratio=4:attack=10:release=250:makeup=2,dynaudnorm=f=250:g=15:m=6]"
+    /// Night mode, set and cleared by a switch — nothing typed by anyone ever reaches the engine's filters. The FFmpeg
+    /// inside MPVKit 1.0.0 is built without its compressors (no acompressor, dynaudnorm or loudnorm: CI's smoke saw
+    /// "No such filter: 'acompressor'" and the sound dropped whole), so it is two things that engine has: a Dolby track's
+    /// own dynamic range compression (the night setting AC-3 / E-AC-3 carry for themselves, full strength), and on every
+    /// track a gentle lift where speech sits (+4 dB around 2.5 kHz) with 3 dB taken off the whole so the lift cannot clip.
+    static let nightFilter = "lavfi=[equalizer=f=2500:t=q:w=1:g=4,volume=volume=-3dB]"
     @Published private(set) var night = false
     func setNight(_ on: Bool) {
+        let was = night
         night = on
+        setProperty("ad-lavc-ac3drc", on ? "1" : "0")
         setProperty("af", on ? MPVController.nightFilter : "")
+        // the compression is the decoder's: a Dolby track already playing takes it only when its decoder starts again
+        guard was != on, loaded, let a = tracks.first(where: { $0.type == "audio" && $0.selected }),
+              ["ac3", "eac3"].contains(a.codec.lowercased()) else { return }
+        setProperty("aid", "no")
+        setProperty("aid", String(a.id))
     }
 
     /// The engine's last error lines (the smoke rig's report).

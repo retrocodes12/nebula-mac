@@ -57,7 +57,7 @@ jobs:
         run: |
           out=$(dist/Nebula.app/Contents/MacOS/Nebula --smoke "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8" --seconds 4 --night)
           echo "$out"
-          echo "$out" | python3 -c "import json,sys; j=json.loads([l for l in sys.stdin.read().splitlines() if l.startswith('{')][-1]); bad=[e for e in j.get('errors',[]) if any(w in e.lower() for w in ('lavfi','filter','acompressor','dynaudnorm'))]; print('night:', j.get('verdict'), j.get('audio'), j.get('af'), bad); sys.exit(0 if j.get('verdict')=='played' and j.get('audio') and 'acompressor' in j.get('af','') and not bad else 1)"
+          echo "$out" | python3 -c "import json,sys; j=json.loads([l for l in sys.stdin.read().splitlines() if l.startswith('{')][-1]); bad=[e for e in j.get('errors',[]) if any(w in e.lower() for w in ('lavfi','filter','equalizer','avfiltergraph'))]; print('night:', j.get('verdict'), j.get('audio'), j.get('af'), j.get('drc'), bad); sys.exit(0 if j.get('verdict')=='played' and j.get('audio') and 'equalizer' in j.get('af','') and j.get('drc','').startswith('1') and not bad else 1)"
       - name: Smoke — a stream that needs its own Referer and hides its pieces in pictures
         run: |
           # the sports add-on's "India only" rows (scripts/wrapped-hls.py says how they look)
@@ -218,7 +218,7 @@ jobs:
           echo "--- Night mode's sound filter"
           night=$(xcrun simctl launch --console-pty "$UDID" com.nebula.player.ios --args --smoke "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8" --seconds 4 --night 2>&1 | grep -E '^\{' || true)
           echo "$night"
-          echo "$night" | python3 -c "import json,sys; j=json.loads([l for l in sys.stdin.read().splitlines() if l.startswith('{')][-1]); bad=[e for e in j.get('errors',[]) if any(w in e.lower() for w in ('lavfi','filter','acompressor','dynaudnorm'))]; print('night:', j.get('verdict'), j.get('audio'), j.get('af'), bad); sys.exit(0 if j.get('verdict')=='played' and j.get('audio') and 'acompressor' in j.get('af','') and not bad else 1)" || failed=1
+          echo "$night" | python3 -c "import json,sys; j=json.loads([l for l in sys.stdin.read().splitlines() if l.startswith('{')][-1]); bad=[e for e in j.get('errors',[]) if any(w in e.lower() for w in ('lavfi','filter','equalizer','avfiltergraph'))]; print('night:', j.get('verdict'), j.get('audio'), j.get('af'), j.get('drc'), bad); sys.exit(0 if j.get('verdict')=='played' and j.get('audio') and 'equalizer' in j.get('af','') and j.get('drc','').startswith('1') and not bad else 1)" || failed=1
           python3 scripts/wrapped-hls.py 8899 > /tmp/wrapped.log 2>&1 &
           for i in $(seq 1 60); do grep -q serving /tmp/wrapped.log && break; sleep 1; done
           curl -s -m 40 --retry 3 -o /dev/null -w "fixture %{http_code}\n" -H "Referer: https://iplayer.is/" http://127.0.0.1:8899/t/abc/index.m3u8

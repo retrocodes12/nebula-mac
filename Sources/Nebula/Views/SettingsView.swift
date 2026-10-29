@@ -80,7 +80,7 @@ struct SettingsView: View {
                             HStack(spacing: 6) { ForEach([0, 1080, 720, 480], id: \.self) { h in Chip(text: h == 0 ? "Best" : "\(h)p", on: maxHeight == h) { maxHeight = h } } }
                         }
                         Hairline()
-                        PanelRow(title: "Night mode", detail: "Loud scenes quieter and quiet speech clearer — for late nights and small speakers. Also in the player's Audio menu.") {
+                        PanelRow(title: "Night mode", detail: "Sound for late nights: a soundtrack that carries its own night setting uses it, and speech is lifted on every stream. Also in the player's Audio menu.") {
                             let _ = nightDrawn
                             Toggle("", isOn: Binding(get: { model.prefs.night }, set: { model.prefs.night = $0; nightDrawn &+= 1 }))
                                 .toggleStyle(.switch).labelsHidden().controlSize(.small)

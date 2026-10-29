@@ -59,7 +59,7 @@ enum Smoke {
                 let line: JSONObject = ["verdict": verdict, "timePos": mpv.timePos, "duration": mpv.duration, "height": mpv.videoHeight,
                                         "video": video?.codec ?? "", "tracks": mpv.tracks.count, "keys": state.keys.count,
                                         "failure": mpv.failure ?? "", "waited": waited, "viaProxy": state.viaProxy, "ffmpeg": mpv.string("ffmpeg-version"), "mpv": mpv.string("mpv-version"),
-                                        "af": mpv.string("af"), "audio": mpv.string("audio-codec-name"), "errors": mpv.recentErrors()]
+                                        "af": mpv.string("af"), "drc": mpv.string("ad-lavc-ac3drc"), "audio": mpv.string("audio-codec-name"), "errors": mpv.recentErrors()]
                 print(JSON.text(line))
                 exit(code)
             }

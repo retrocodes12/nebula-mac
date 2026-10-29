@@ -793,7 +793,7 @@ struct PlayerSheetView: View {
                         Toggle("Night mode", isOn: Binding(get: { mpv.night }, set: { mpv.setNight($0); prefs.night = $0 }))
                             .scaledFont(size: 15).foregroundStyle(Theme.ink).listRowBackground(Theme.surface)
                     } footer: {
-                        Text("Loud scenes quieter, quiet speech clearer. Kept for the next stream and the next episode.")
+                        Text("A soundtrack that carries its own night setting uses it, and speech is lifted. Kept for the next stream and the next episode.")
                     }
                 case .subtitles:
                     let list = mpv.tracks.filter { $0.type == "sub" }
