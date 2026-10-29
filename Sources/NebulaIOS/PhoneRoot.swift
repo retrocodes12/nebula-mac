@@ -102,6 +102,8 @@ struct PhoneRoot: View {
                     .transition(.opacity)
             }
         }
+        // Autoplay the best stream: its launch card, over the list and then the player until the first picture
+        .overlay { AutoplayCardHost() }
         // two profiles on the account: who's watching? (at launch, over everything but the toasts)
         .overlay {
             if model.askingWho || model.whoOpen { WhoPicker().transition(.opacity) }

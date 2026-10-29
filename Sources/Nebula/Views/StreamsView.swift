@@ -24,6 +24,11 @@ struct StreamsView: View {
     @State private var waitTask: Task<Void, Never>?
     /// The page as it was pushed — what the model's stack holds for it (`target` fills in).
     private let opened: StreamsTarget
+    #if os(iOS)
+    /// Autoplay the best stream (the iPhone only): the pick of this page's FIRST load — never a Try again, never Back.
+    @State private var apPick: AutoplayPick?
+    @State private var apTried = false
+    #endif
 
     init(target: StreamsTarget) { _target = State(initialValue: target); opened = target }
 
@@ -96,8 +101,17 @@ struct StreamsView: View {
         .onDisappear {
             // Back while a tap waited for the series: that tap is void
             waitTask?.cancel(); waitTask = nil; waiting = nil
+            #if os(iOS)
+            apPick?.pageLeft(); apPick = nil
+            #endif
         }
         .task {
+            #if os(iOS)
+            if !apTried {
+                apTried = true
+                apPick = AutoplayPick.begin(model: model, target: opened) { row in play(row.stream, from: row.addon, key: "autoplay", auto: true) }
+            }
+            #endif
             // the series is looked up beside the streams, not before them
             let h = Task { await hydrate() }
             hydration = h
@@ -111,10 +125,10 @@ struct StreamsView: View {
     /// A tap plays — but opened from Continue watching, not before the series lookup is in
     /// (or three seconds have gone): without the episode list the player has no Next episode
     /// and no autoplay, and a quick tap used to start it with neither.
-    private func play(_ st: StreamItem, from addon: Addon, key: String) {
+    private func play(_ st: StreamItem, from addon: Addon, key: String, auto: Bool = false) {
         guard waiting == nil else { return }
         guard let h = hydration, needsSeries else {
-            model.play(st, target: target, from: addon, fresh: fresh)
+            model.play(st, target: target, from: addon, fresh: fresh, auto: auto)
             return
         }
         waiting = key
@@ -124,7 +138,7 @@ struct StreamsView: View {
             if waiting == key { waiting = nil }
             // the viewer went Back, or on to another page, while it waited: not theirs to play now
             guard !Task.isCancelled, model.path.last == here, model.player == nil else { return }
-            model.play(st, target: target, from: addon, fresh: fresh)
+            model.play(st, target: target, from: addon, fresh: fresh, auto: auto)
         }
     }
 
@@ -139,12 +153,24 @@ struct StreamsView: View {
         }
         let r = await model.loadStreams(target, onAsking: { a in
             if !asking.contains(a) { asking.append(a) }
+            #if os(iOS)
+            apPick?.asked(a)
+            #endif
         }, onDone: { a in
             asking.removeAll { $0 == a }
+            #if os(iOS)
+            apPick?.done(a)
+            #endif
         }) { s in
             if let i = sections.firstIndex(where: { $0.id == s.id }) { sections[i] = s } else { sections.append(s) }
+            #if os(iOS)
+            apPick?.sections(order(sections))
+            #endif
         }
         slowTimer.cancel()
+        #if os(iOS)
+        apPick?.finished()
+        #endif
         answered = r.answered; unreachable = r.unreachable
         asking = []
         loading = false

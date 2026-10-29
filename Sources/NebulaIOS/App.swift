@@ -148,6 +148,17 @@ enum Launch {
                 NotificationCenter.default.post(name: SettingsView.shotsScroll, object: section)
             }
         }
+        // the screenshot rig: Autoplay the best stream switched on ("on"), its Settings group ("settings"), its card ("card")
+        if let ap = value("--autoplay") {
+            model.prefs.bestPlay = ap != "off"
+            if ap == "settings" {
+                Task {
+                    try? await Task.sleep(nanoseconds: 4_000_000_000)
+                    NotificationCenter.default.post(name: SettingsView.shotsScroll, object: "autoplay")
+                }
+            }
+            if ap == "card" { AutoplayRun.shared.plantForShots() }
+        }
         if let address = value("--play") {
             var c = URLComponents()
             c.scheme = "nebula"

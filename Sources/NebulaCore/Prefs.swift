@@ -24,6 +24,10 @@ public final class Prefs: @unchecked Sendable {
         store.setObject("prefs", o)
     }
 
+    /// For the preferences kept beside their feature (Autoplay.swift).
+    func value(_ k: String) -> Any? { get(k) }
+    func setValue(_ k: String, _ v: Any) { put(k, v) }
+
     /// Gold, Ice and Mint — for supporters (the shared player's SUP_ACCENTS).
     public static let supporterAccents: [(name: String, hex: String)] = [("Gold", "#E0B24A"), ("Ice", "#64D2FF"), ("Mint", "#66D4CF")]
 

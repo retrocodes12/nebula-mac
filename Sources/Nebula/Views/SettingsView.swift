@@ -84,6 +84,11 @@ struct SettingsView: View {
                     }
                 }
 
+                #if os(iOS)
+                // the iPhone only: Play on a film or an episode starts its best stream (AutoplaySettings, the phone's shell)
+                section("Autoplay the best stream", id: "autoplay") { AutoplaySettings() }
+                #endif
+
                 section("Subtitles", id: "subtitles") {
                     Panel {
                         SubStyleControls().padding(.vertical, 10)

@@ -59,6 +59,8 @@ struct PlayRequest: Identifiable, Equatable {
     var target: StreamsTarget
     var streamAddon: Addon?
     var startAt: Double = 0
+    /// Started by Autoplay the best stream (the iPhone's; never set on a Mac): a failed start tries the next row.
+    var auto = false
 
     var title: String { target.item.name }
     var kicker: String? {
@@ -793,9 +795,10 @@ final class AppModel: ObservableObject {
 
     // MARK: play
 
-    func play(_ stream: StreamItem, target: StreamsTarget, from addon: Addon?, fresh: Bool = false) {
+    func play(_ stream: StreamItem, target: StreamsTarget, from addon: Addon?, fresh: Bool = false, auto: Bool = false) {
         var req = PlayRequest(stream: stream, target: target, streamAddon: addon)
         if prefs.resume && !fresh { req.startAt = progress.resumeAt(target.type, target.id) }
+        req.auto = auto
         player = req
     }
 

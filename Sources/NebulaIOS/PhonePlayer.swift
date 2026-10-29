@@ -40,8 +40,14 @@ struct PhonePlayer: View {
     @State private var nowPlaying = NowPlaying()
     /// Skip intro, Seekr's pictures and the subtitle nudge — the same object the Mac uses.
     @StateObject private var extras = PlayerExtras()
+    /// The first picture showed (Autoplay: a start that failed or stayed dark before it gives way to the next row).
+    @State private var framed = false
+    /// "Give a start": no picture by then, the next best row (Autoplay starts only).
+    @State private var startTimer: Task<Void, Never>?
+    /// The few-second "not ready" clip of a debrid row was caught for this play (once).
+    @State private var clipCaught = false
 
-    enum PlayerSheet: String, Identifiable { case audio, subtitles, speed, fit, info; var id: String { rawValue } }
+    enum PlayerSheet: String, Identifiable { case audio, subtitles, speed, fit, info, streams; var id: String { rawValue } }
 
     init(request: PlayRequest, hardwareDecoding: Bool) {
         self.request = request
@@ -87,7 +93,9 @@ struct PhonePlayer: View {
         .persistentSystemOverlays(.hidden)
         .sheet(item: $sheet) { s in
             PlayerSheetView(kind: s, mpv: mpv, extras: extras, subsAdded: captions.settled, infoRows: infoRows, prefs: model.prefs,
-                            onSubtitlePick: { captions.picked() })
+                            onSubtitlePick: { captions.picked() },
+                            streams: s == .streams ? AutoplayRun.shared.menu(cur: request.stream.url, cfg: model.prefs.autoplay) : [],
+                            current: request.stream.url, onStreamPick: { switchTo($0) })
                 .environmentObject(model)
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
@@ -98,6 +106,10 @@ struct PhonePlayer: View {
         .onChange(of: mpv.timePos) { t in tick(t) }
         .onChange(of: mpv.ended) { e in if e { reachedEnd() } }
         .onChange(of: mpv.loaded) { l in if l { loadedNow() } }
+        // Autoplay the best stream: the first picture, a start that failed before it, a debrid "not ready" clip
+        .onChange(of: mpv.videoHeight) { h in if h > 0 && !framed { framed = true; AutoplayRun.shared.started(request.stream.url) } }
+        .onChange(of: mpv.failure) { f in if f != nil && request.auto && !framed { _ = autoNext("error") } }
+        .onChange(of: mpv.duration) { _ in briefCheck() }
         .onChange(of: wantsAwake) { awakeNow($0) }
         .onChange(of: model.subStyleVersion) { _ in applySubStyle() }
         // the hide timer stands down while a sheet is up, so closing one has to re-arm it or the
@@ -320,6 +332,8 @@ struct PhonePlayer: View {
                     barButton("captions.bubble", "Subtitles", .subtitles)
                     barButton("waveform", "Audio", .audio)
                     Spacer()
+                    // Autoplay chose this one: every row of the title, best first
+                    if request.auto { barButton("list.bullet", "Streams", .streams) }
                     barButton("speedometer", "Speed", .speed)
                     barButton("aspectratio", "Picture size", .fit)
                     barButton("info.circle", "Info", .info)
@@ -438,7 +452,8 @@ struct PhonePlayer: View {
 
     @ViewBuilder private var failureActions: some View {
         if resolved != nil { Button("Try again") { retry() }.buttonStyle(PillButtonStyle(filled: false)) }
-        Button("Try another stream") { close() }.buttonStyle(PillButtonStyle())
+        // to the list even when Autoplay started it: the viewer is choosing now
+        Button("Try another stream") { close(toList: true) }.buttonStyle(PillButtonStyle())
     }
 
     private func nextPill(_ n: Episode) -> some View {
@@ -488,6 +503,14 @@ struct PhonePlayer: View {
         holdLandscape()
         applySubStyle()
         extras.startSkip(type: t.type, id: t.id, mode: model.prefs.skipIntro)
+        if request.auto {
+            let secs = UInt64(model.prefs.apStart)
+            startTimer = Task {
+                try? await Task.sleep(nanoseconds: secs * 1_000_000_000)
+                guard !Task.isCancelled, !finished, !framed else { return }
+                if !autoNext("slow") { AutoplayRun.shared.started(request.stream.url) }
+            }
+        }
         let s = request.stream
         sourceTask = Task {
             let got = await PlaybackRules.source(for: s, maxHeight: model.prefs.maxHeight, stremio: model.stremio)
@@ -537,13 +560,14 @@ struct PhonePlayer: View {
     }
 
     private func save() {
-        guard mpv.loaded, !mpv.isLive, mpv.duration > 0 else { return }
+        guard mpv.loaded, !mpv.isLive, mpv.duration > 0, !clipNow else { return }
         model.progress.note(PlaybackRules.record(target: request.target, pos: mpv.timePos, dur: mpv.duration))
     }
 
     private func reachedEnd() {
         guard !finished, model.player?.id == request.id else { return }
         guard !mpv.isLive else { mpv.failure = PlaybackRules.liveStopped; return }
+        guard !clipNow else { return }                 // a debrid clip ended, not the film: no tick, no next episode
         guard PlaybackRules.reachedTheEnd(pos: mpv.timePos, dur: mpv.duration) else {
             // the connection went, not the film: keep the place and say so
             save()
@@ -603,7 +627,11 @@ struct PhonePlayer: View {
     private func finish() {
         guard !finished else { return }
         finished = true
-        sourceTask?.cancel(); subtitleTask?.cancel(); nextTask?.cancel()
+        sourceTask?.cancel(); subtitleTask?.cancel(); nextTask?.cancel(); startTimer?.cancel()
+        // an Autoplay run ends with its player — unless the next try of the same title took its place
+        if request.auto, !(model.player.map { $0.id != request.id && $0.auto && $0.target.id == request.target.id } ?? false) {
+            AutoplayRun.shared.endFor(request.target)
+        }
         ManifestProxy.shared.release(manifestToken)
         manifestToken = nil
         save()
@@ -623,10 +651,64 @@ struct PhonePlayer: View {
         Task { await model.cloud.flush() }
     }
 
-    private func close() {
+    /// `toList` false: Back from a player Autoplay started skips the list it never showed (Settings › Autoplay the best
+    /// stream › Back from the player · Title page).
+    private func close(toList: Bool = false) {
         guard model.player?.id == request.id else { return }
+        let skipList = request.auto && !toList && model.prefs.apBack == "title"
         finish()
         model.player = nil
+        if skipList, case .streams(let t)? = model.path.last, t.type == request.target.type, t.id == request.target.id {
+            model.path.removeLast()
+        }
+    }
+
+    // MARK: autoplay the best stream
+
+    /// A debrid row that sent a few seconds instead of the film: no resume point, no tick, no next episode.
+    private var clipNow: Bool {
+        mpv.duration > 0 && Autoplay.briefClip(name: request.stream.name, url: request.stream.url, type: request.target.type,
+                                               durationMs: Int(mpv.duration * 1000))
+    }
+
+    /// The clip is caught once per play: the next best row when Autoplay started it, else a sentence.
+    private func briefCheck() {
+        guard !clipCaught, mpv.loaded, clipNow, !finished, model.player?.id == request.id else { return }
+        clipCaught = true
+        if request.auto && autoNext("brief") { return }
+        mpv.failure = "This source sent a short message instead of the film — its service could not hand the file over. Try another stream."
+    }
+
+    /// A start that did not start (an error before its first picture, no picture in time, a debrid clip — `why` error /
+    /// slow / brief): the next best row plays in its place, from the same place, and the card says so. False = none
+    /// left (or not an Autoplay start): this player's own handling goes on.
+    private func autoNext(_ why: String) -> Bool {
+        guard request.auto, !finished, model.player?.id == request.id else { return false }
+        let run = AutoplayRun.shared
+        guard run.isFor(request.target), let n = run.next(cur: request.stream.url, cfg: model.prefs.autoplay) else {
+            AutoplayRun.shared.started(request.stream.url)
+            return false
+        }
+        run.startCard(n.stream, from: n.addon, why: why)
+        var req = PlayRequest(stream: n.stream, target: request.target, streamAddon: n.addon)
+        req.startAt = request.startAt
+        req.auto = true
+        model.player = req
+        return true
+    }
+
+    /// A row picked from the player's Streams list: it plays from this second, and keeps the retries until its picture.
+    private func switchTo(_ url: String) {
+        sheet = nil
+        guard url != request.stream.url, !finished, model.player?.id == request.id,
+              let r = AutoplayRun.shared.rows.first(where: { $0.stream.url == url }) else { return }
+        save()
+        AutoplayRun.shared.playing = url
+        var req = PlayRequest(stream: r.stream, target: request.target, streamAddon: r.addon)
+        req.startAt = mpv.isLive ? 0 : max(0, mpv.timePos)
+        req.auto = true
+        model.player = req
+        model.say("Switched to " + (Autoplay.qualityWord(r.stream).isEmpty ? r.addon.name : Autoplay.qualityWord(r.stream) + " · " + r.addon.name))
     }
 
     /// Show the chrome, then let it go after three quiet seconds. A sheet, a pause or a failure
@@ -690,6 +772,10 @@ struct PlayerSheetView: View {
     let infoRows: [(String, String)]
     let prefs: Prefs
     let onSubtitlePick: () -> Void
+    /// Autoplay's Streams list: (label, address) best first, the one playing, and a pick.
+    var streams: [(label: String, url: String)] = []
+    var current = ""
+    var onStreamPick: (String) -> Void = { _ in }
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -725,6 +811,11 @@ struct PlayerSheetView: View {
                     ForEach(["fit", "fill", "stretch"], id: \.self) { m in
                         row(MPVController.fitName(m), on: mpv.fit == m) { mpv.setFit(m) }
                     }
+                case .streams:
+                    if streams.isEmpty { note("No other streams for this title.") }
+                    ForEach(streams, id: \.url) { r in
+                        row(r.label, on: r.url == current) { onStreamPick(r.url) }
+                    }
                 case .info:
                     ForEach(infoRows, id: \.0) { r in
                         HStack {
@@ -753,6 +844,7 @@ struct PlayerSheetView: View {
         case .subtitles: return "Subtitles"
         case .speed: return "Speed"
         case .fit: return "Picture size"
+        case .streams: return "Streams"
         case .info: return "Info"
         }
     }
