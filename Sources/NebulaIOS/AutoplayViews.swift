@@ -112,56 +112,50 @@ private struct ApChipView: View {
 /// Settings › Autoplay the best stream: the switch, and its six options while it is on (Android's group, word for word).
 struct AutoplaySettings: View {
     @EnvironmentObject var model: AppModel
-    @State private var on = false
-    @State private var apMax = 2160
-    @State private var instant = true
-    @State private var wait = "balanced"
-    @State private var retry = 5
-    @State private var start = 45
-    @State private var back = "title"
+    /// The prefs are read where they are drawn (not copied when the page first appeared — every tab is alive from
+    /// launch, so a copy went stale); a change bumps this to draw again.
+    @State private var drawn = 0
 
     var body: some View {
+        let _ = drawn
+        let p = model.prefs
         Panel {
             PanelRow(title: "Autoplay the best stream", detail: "Play on a film or episode starts its best stream — no list") {
-                Toggle("", isOn: $on).toggleStyle(.switch).labelsHidden().controlSize(.small)
+                Toggle("", isOn: bind(p.bestPlay) { p.bestPlay = $0 }).toggleStyle(.switch).labelsHidden().controlSize(.small)
             }
-            if on {
+            if p.bestPlay {
                 Hairline()
                 chips("Aim for", "The best quality worth starting · higher ones come after it",
-                      [(2160, "4K"), (1080, "1080p"), (720, "720p")], $apMax)
+                      [(2160, "4K"), (1080, "1080p"), (720, "720p")], p.apMax) { p.apMax = $0 }
                 Hairline()
                 PanelRow(title: "Instant debrid first", detail: "Debrid rows that are ready play before higher quality") {
-                    Toggle("", isOn: $instant).toggleStyle(.switch).labelsHidden().controlSize(.small)
+                    Toggle("", isOn: bind(p.apInstant) { p.apInstant = $0 }).toggleStyle(.switch).labelsHidden().controlSize(.small)
                 }
                 Hairline()
                 chips("Wait for add-ons", "Quick starts sooner · All waits for every add-on to answer",
-                      [("quick", "Quick"), ("balanced", "Balanced"), ("all", "All")], $wait)
+                      [("quick", "Quick"), ("balanced", "Balanced"), ("all", "All")], p.apWait) { p.apWait = $0 }
                 Hairline()
-                chips("If it won't start", "Plays the next best stream instead", [(0, "Off"), (3, "Next 3"), (5, "Next 5")], $retry)
+                chips("If it won't start", "Plays the next best stream instead",
+                      [(0, "Off"), (3, "Next 3"), (5, "Next 5")], p.apRetry) { p.apRetry = $0 }
                 Hairline()
-                chips("Give a start", "How long a stream has to show its picture", [(20, "20 s"), (45, "45 s"), (90, "90 s")], $start)
+                chips("Give a start", "How long a stream has to show its picture",
+                      [(20, "20 s"), (45, "45 s"), (90, "90 s")], p.apStart) { p.apStart = $0 }
                 Hairline()
                 chips("Back from the player", "Where Back lands after a film started this way",
-                      [("title", "Title page"), ("list", "Streams list")], $back)
+                      [("title", "Title page"), ("list", "Streams list")], p.apBack) { p.apBack = $0 }
             }
         }
-        .onAppear {
-            let p = model.prefs
-            on = p.bestPlay; apMax = p.apMax; instant = p.apInstant; wait = p.apWait; retry = p.apRetry; start = p.apStart; back = p.apBack
-        }
-        .onChange(of: on) { model.prefs.bestPlay = $0 }
-        .onChange(of: apMax) { model.prefs.apMax = $0 }
-        .onChange(of: instant) { model.prefs.apInstant = $0 }
-        .onChange(of: wait) { model.prefs.apWait = $0 }
-        .onChange(of: retry) { model.prefs.apRetry = $0 }
-        .onChange(of: start) { model.prefs.apStart = $0 }
-        .onChange(of: back) { model.prefs.apBack = $0 }
     }
 
-    private func chips<V: Hashable>(_ title: String, _ detail: String, _ opts: [(V, String)], _ value: Binding<V>) -> some View {
+    private func bind(_ v: Bool, _ set: @escaping (Bool) -> Void) -> Binding<Bool> {
+        Binding(get: { v }, set: { set($0); drawn &+= 1 })
+    }
+
+    private func chips<V: Hashable>(_ title: String, _ detail: String, _ opts: [(V, String)], _ value: V,
+                                    _ set: @escaping (V) -> Void) -> some View {
         PanelRow(title: title, detail: detail) {
             HStack(spacing: 6) {
-                ForEach(opts, id: \.0) { o in Chip(text: o.1, on: value.wrappedValue == o.0) { value.wrappedValue = o.0 } }
+                ForEach(opts, id: \.0) { o in Chip(text: o.1, on: value == o.0) { set(o.0); drawn &+= 1 } }
             }
         }
     }
