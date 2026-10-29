@@ -175,6 +175,18 @@ final class MPVController: ObservableObject {
     func setVolume(_ v: Double) { setDouble("volume", min(130, max(0, v))) }
     func toggleMute() { setFlag("mute", !muted) }
     func setSpeed(_ s: Double) { setDouble("speed", s) }
+
+    /// Night mode: loud scenes brought down and quiet speech brought up — one fixed chain (a gentle compressor, then a
+    /// slow loudness leveller), set and cleared by a switch; nothing typed by anyone ever reaches the engine's filters.
+    static let nightFilter = "lavfi=[acompressor=threshold=0.063:ratio=4:attack=10:release=250:makeup=2,dynaudnorm=f=250:g=15:m=6]"
+    @Published private(set) var night = false
+    func setNight(_ on: Bool) {
+        night = on
+        setProperty("af", on ? MPVController.nightFilter : "")
+    }
+
+    /// The engine's last error lines (the smoke rig's report).
+    func recentErrors() -> [String] { queue.sync { lastErrorLines } }
     func setFit(_ mode: String) {
         let m = mode == "fill" || mode == "stretch" ? mode : "fit"
         fit = m; UserDefaults.standard.set(m, forKey: "nebula.fit")

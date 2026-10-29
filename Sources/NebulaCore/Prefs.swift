@@ -94,6 +94,11 @@ public final class Prefs: @unchecked Sendable {
         get { (get("audioLang") as? String) ?? "" }
         set { put("audioLang", newValue) }
     }
+    /// Night mode (the player's Audio menu, Settings › Playback): loud scenes down, quiet speech up. Off by default.
+    public var night: Bool {
+        get { (get("night") as? Bool) ?? false }
+        set { put("night", newValue) }
+    }
     public var volume: Double {
         get { (get("volume") as? NSNumber)?.doubleValue ?? 100 }
         set { put("volume", newValue) }

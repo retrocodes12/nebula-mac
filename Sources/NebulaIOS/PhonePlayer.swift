@@ -502,6 +502,7 @@ struct PhonePlayer: View {
         awakeNow(wantsAwake)
         holdLandscape()
         applySubStyle()
+        mpv.setNight(model.prefs.night)
         extras.startSkip(type: t.type, id: t.id, mode: model.prefs.skipIntro)
         if request.auto {
             let secs = UInt64(model.prefs.apStart)
@@ -787,6 +788,12 @@ struct PlayerSheetView: View {
                     if list.isEmpty { note("This stream has one soundtrack.") }
                     ForEach(list) { t in
                         row(t.label, on: t.selected) { mpv.selectTrack("audio", id: t.id); prefs.audioLang = Lang.key(t.lang) }
+                    }
+                    Section {
+                        Toggle("Night mode", isOn: Binding(get: { mpv.night }, set: { mpv.setNight($0); prefs.night = $0 }))
+                            .scaledFont(size: 15).foregroundStyle(Theme.ink).listRowBackground(Theme.surface)
+                    } footer: {
+                        Text("Loud scenes quieter, quiet speech clearer. Kept for the next stream and the next episode.")
                     }
                 case .subtitles:
                     let list = mpv.tracks.filter { $0.type == "sub" }

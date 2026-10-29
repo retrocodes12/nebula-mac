@@ -245,6 +245,9 @@ struct PlayerScreen: View {
                     let list = mpv.tracks.filter { $0.type == "audio" }
                     if list.isEmpty { menuNote("This stream has one soundtrack.") }
                     ForEach(list) { t in menuRow(t.label, on: t.selected) { mpv.selectTrack("audio", id: t.id); model.prefs.audioLang = Lang.key(t.lang) } }
+                    Divider().overlay(Color.white.opacity(0.12)).padding(.vertical, 4)
+                    // loud scenes down, quiet speech up; kept for the next source and the next episode
+                    menuRow("Night mode", on: mpv.night) { mpv.setNight(!mpv.night); model.prefs.night = mpv.night }
                 case .subtitles:
                     menuTitle("Subtitles")
                     let list = mpv.tracks.filter { $0.type == "sub" }
@@ -373,6 +376,7 @@ struct PlayerScreen: View {
     private func start() {
         guard sourceTask == nil, !finished, model.player?.id == request.id else { return }
         mpv.setVolume(model.prefs.volume)
+        mpv.setNight(model.prefs.night)
         let t = request.target
         nowPlaying.start(id: request.id, mpv: mpv, title: request.kicker ?? request.title, subtitle: request.kicker == nil ? nil : request.title,
                          step: Double(model.prefs.seekStep), art: t.episode?.thumbnail ?? t.item.background ?? t.item.poster)

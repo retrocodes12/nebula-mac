@@ -9,6 +9,8 @@ struct SettingsView: View {
     @State private var hwdec = true
     @State private var maxHeight = 0
     @State private var skipIntro = "button"
+    /// Night mode is also switched in the player's Audio menu: read where it is drawn, bumped to draw again.
+    @State private var nightDrawn = 0
     @State private var seekrField = ""
     @State private var seekrNote: String?
     @State private var seekrBusy = false
@@ -78,6 +80,12 @@ struct SettingsView: View {
                             HStack(spacing: 6) { ForEach([0, 1080, 720, 480], id: \.self) { h in Chip(text: h == 0 ? "Best" : "\(h)p", on: maxHeight == h) { maxHeight = h } } }
                         }
                         Hairline()
+                        PanelRow(title: "Night mode", detail: "Loud scenes quieter and quiet speech clearer — for late nights and small speakers. Also in the player's Audio menu.") {
+                            let _ = nightDrawn
+                            Toggle("", isOn: Binding(get: { model.prefs.night }, set: { model.prefs.night = $0; nightDrawn &+= 1 }))
+                                .toggleStyle(.switch).labelsHidden().controlSize(.small)
+                        }
+                        Hairline()
                         PanelRow(title: "Decode on the graphics chip", detail: "\(Platform.hardwareDecodingGain) Switch it off if a film shows a broken picture.") {
                             Toggle("", isOn: $hwdec).toggleStyle(.switch).labelsHidden().controlSize(.small)
                         }
@@ -126,7 +134,7 @@ struct SettingsView: View {
         .onAppear {
             seekStep = model.prefs.seekStep; resume = model.prefs.resume
             autoplayNext = model.prefs.autoplayNext; hwdec = model.prefs.hardwareDecoding; maxHeight = model.prefs.maxHeight
-            skipIntro = model.prefs.skipIntro
+            skipIntro = model.prefs.skipIntro; nightDrawn &+= 1
         }
         .onChange(of: skipIntro) { model.prefs.skipIntro = $0 }
         .onChange(of: seekStep) { model.prefs.seekStep = $0 }

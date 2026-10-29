@@ -28,6 +28,8 @@ enum Smoke {
         let state = State()
         state.keys = ClearKey.fromFragment("#clearkey=" + (value("--keys") ?? ""))
         let mpv = MPVController(headless: true)
+        // `--night`: the Night mode filter on, read back in the report with the engine's error lines
+        if args.contains("--night") { mpv.setNight(true) }
         let started = Date()
         Task { @MainActor in
             // the same road the player takes: the loopback manifest cache, then the licence
@@ -56,7 +58,8 @@ enum Smoke {
                 let video = mpv.tracks.first { $0.type == "video" && $0.selected }
                 let line: JSONObject = ["verdict": verdict, "timePos": mpv.timePos, "duration": mpv.duration, "height": mpv.videoHeight,
                                         "video": video?.codec ?? "", "tracks": mpv.tracks.count, "keys": state.keys.count,
-                                        "failure": mpv.failure ?? "", "waited": waited, "viaProxy": state.viaProxy, "ffmpeg": mpv.string("ffmpeg-version"), "mpv": mpv.string("mpv-version")]
+                                        "failure": mpv.failure ?? "", "waited": waited, "viaProxy": state.viaProxy, "ffmpeg": mpv.string("ffmpeg-version"), "mpv": mpv.string("mpv-version"),
+                                        "af": mpv.string("af"), "audio": mpv.string("audio-codec-name"), "errors": mpv.recentErrors()]
                 print(JSON.text(line))
                 exit(code)
             }
