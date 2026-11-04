@@ -40,6 +40,7 @@ struct PhonePlayer: View {
     @State private var nowPlaying = NowPlaying()
     /// Skip intro, Seekr's pictures and the subtitle nudge — the same object the Mac uses.
     @StateObject private var extras = PlayerExtras()
+    @StateObject private var levels = SwipeLevels()      // VLC's brightness/volume swipes (SwipeLevels.swift)
     /// The first picture showed (Autoplay: a start that failed or stayed dark before it gives way to the next row).
     @State private var framed = false
     /// "Give a start": no picture by then, the next best row (Autoplay starts only).
@@ -72,6 +73,8 @@ struct PhonePlayer: View {
                 tapZone(back: false)
             }
             .ignoresSafeArea()
+            SystemVolumeView(levels: levels).frame(width: 1, height: 1).allowsHitTesting(false)
+            SwipeLevelBar(levels: levels)
 
             if mpv.buffering && mpv.failure == nil {
                 ProgressView().controlSize(.large).tint(.white).allowsHitTesting(false)
@@ -228,6 +231,14 @@ struct PhonePlayer: View {
             .onTapGesture(count: 2) {
                 if skip(forward: !back) { UIImpactFeedbackGenerator(style: .light).impactOccurred() }
             }
+            // up/down: brightness on the left half, volume on the right (VLC); a sideways start is not ours
+            .gesture(DragGesture(minimumDistance: 12, coordinateSpace: .global)
+                .onChanged { g in
+                    guard !locked else { return }
+                    if !levels.active && abs(g.translation.height) < abs(g.translation.width) { return }
+                    levels.change(left: back, start: g.startLocation, dy: g.translation.height, height: UIScreen.main.bounds.height)
+                }
+                .onEnded { _ in levels.end() })
             .onTapGesture {
                 if locked { show(flash: "Locked"); return }
                 withAnimation(.easeOut(duration: 0.2)) { chromeVisible.toggle() }
@@ -641,6 +652,7 @@ struct PhonePlayer: View {
         flashTask?.cancel()
         extras.stop()
         nowPlaying.finish()
+        levels.restore()            // the screen's own brightness again
         awakeNow(false)
         // the screen turns back only when no other player has taken it over (the next episode's
         // appears before this one is gone, and keeps it in landscape)
