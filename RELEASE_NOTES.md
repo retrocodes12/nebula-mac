@@ -1,5 +1,7 @@
 Nebula for Mac and iPhone — native Swift apps (SwiftUI, libmpv engine). macOS 13 or later on Apple silicon and Intel; iOS 16 or later, iPad included.
 
+**New in 0.8.0** — stream cards. Each stream on a streams page is now a card: the film's title and year with its source and picture codec, the size and seeds, the quality, the picture and sound marks, its languages, the add-on and service it comes from, a play button, and the file's own name underneath. Settings › Streams › Stream cards offers Release, Compact, One line, Minimal and Classic (the list as it was), each with a small live preview, and Custom: stacked or one line, roomy or compact, and which of ten parts show. Your choice stays on this device.
+
 **New in 0.7.0** — on the iPhone, Autoplay the best stream (Settings › Streams): Play on a film or episode starts its best stream with no list, ready debrid rows first, then the quality you aim for, and the next one by itself if it will not start. Night mode on the Mac and the iPhone (the player's Audio menu): quiet voices clearer, and Dolby tracks keep their loud moments down. A stream list that fails once is asked again before the add-on counts as failed.
 
 **New in 0.6.5** — profiles keep to themselves across devices: a second profile no longer picks up the first profile's add-ons when the connection drops, signing into another account no longer brings your second profile (its name, PIN, history and add-ons) along, and signing in asks who's watching.
