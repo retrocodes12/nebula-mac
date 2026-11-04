@@ -56,10 +56,16 @@ struct StreamCardSettings: View {
                                 .padding(.trailing, 8).padding(.vertical, 4)
                         }
                     }
+                    #if os(iOS)
+                    // a phone's panel is narrower than any real row: the card is drawn at a row's width and scaled
+                    // down, as in the tiles — at its own size a one-line card squeezed its title to a word
+                    StreamCardPreview(spec: custom, height: 170).padding(.top, 6)
+                    #else
                     StreamCardBody(card: StreamCardPreview.sample.card, spec: custom, addonName: StreamCards.sampleAddon)
                         .frame(maxWidth: 640, alignment: .leading)
                         .allowsHitTesting(false)
                         .padding(.top, 6)
+                    #endif
                 }
                 .padding(.horizontal, 16).padding(.vertical, 12)
             }
