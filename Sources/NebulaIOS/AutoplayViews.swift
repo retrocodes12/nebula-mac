@@ -42,10 +42,13 @@ struct AutoplayCardHost: View {
                     .padding(.top, 22)
                     if !c.chips.isEmpty {
                         let shown = narrow ? 3 : 6
-                        HStack(spacing: 8) {
-                            ForEach(Array(c.chips.prefix(shown).enumerated()), id: \.offset) { _, ch in ApChipView(chip: ch) }
+                        // the chips wrap onto a second line (Android's one-row version squeezed the second chip on a phone and
+                        // broke its count one digit a line, 11-04); each carries its own 8 pt gap
+                        FactsFlow(lineSpacing: 8) {
+                            ForEach(Array(c.chips.prefix(shown).enumerated()), id: \.offset) { _, ch in ApChipView(chip: ch).padding(.trailing, 8) }
                             if c.chips.count > shown {
                                 Text("+\(c.chips.count - shown)").font(.system(size: 13, design: .monospaced)).foregroundStyle(Theme.label2)
+                                    .padding(.vertical, 6)
                             }
                         }
                         .padding(.top, 16)
@@ -102,6 +105,7 @@ private struct ApChipView: View {
                 .frame(maxWidth: 180, alignment: .leading).fixedSize(horizontal: true, vertical: false)
             if let n = chip.count {
                 Text(n > 0 ? "\(n)" : "none").font(.system(size: 12, design: .monospaced)).foregroundStyle(Theme.label2)
+                    .lineLimit(1).fixedSize()
             }
         }
         .padding(.horizontal, 12).padding(.vertical, 6)
