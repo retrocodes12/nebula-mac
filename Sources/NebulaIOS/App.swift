@@ -159,6 +159,23 @@ enum Launch {
             }
             if ap == "card" { AutoplayRun.shared.plantForShots() }
         }
+        // the screenshot rig: a stream card design ("release", "line", "classic", "custom"), then a planted streams page
+        // ("list"), Settings › Streams' gallery ("settings") or Custom's controls ("custom")
+        if let style = value("--cards") {
+            if style == "custom" { model.prefs.streamCustom = CardShots.customShot }
+            model.prefs.streamStyle = style
+        }
+        if let page = value("--cards-page") {
+            if page == "list" {
+                CardShots.plant(model)
+                model.push(.streams(CardShots.target))
+            } else {
+                Task {
+                    try? await Task.sleep(nanoseconds: 4_000_000_000)
+                    NotificationCenter.default.post(name: SettingsView.shotsScroll, object: page == "custom" ? StreamCardSettings.customId : "streams")
+                }
+            }
+        }
         if let address = value("--play") {
             var c = URLComponents()
             c.scheme = "nebula"

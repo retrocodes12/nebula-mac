@@ -87,6 +87,8 @@ struct Toast: Equatable, Identifiable {
 
 @MainActor
 final class AppModel: ObservableObject {
+    /// The screenshot rig's stream list (CardShots): a streams page shows it instead of asking the add-ons.
+    var plantedStreams: [StreamSection]?
     let store: Store
     let addonStore: AddonStore
     let progress: ProgressStore

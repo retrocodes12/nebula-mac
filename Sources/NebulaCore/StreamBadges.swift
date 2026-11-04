@@ -68,12 +68,17 @@ public enum StreamBadges {
 
     /// Badge file names for a row. `skipGroup` is a group shown elsewhere (the resolution plate).
     public static func match(_ raw: String, skipGroup: String? = "resolution") -> Match {
+        match(raw, skipGroups: skipGroup.map { [$0] } ?? [], cap: 6)
+    }
+
+    /// The same with several groups shown elsewhere (the release card's chip and tags) and a cap of its own.
+    public static func match(_ raw: String, skipGroups: Set<String>, cap: Int) -> Match {
         var seen = Set<String>()
         var badges: [String] = []
         var fired: [NSRegularExpression] = []
         for r in pack where hit(r.re, raw) {
             fired.append(r.re)                        // every match cleans the text line
-            if r.group == skipGroup || seen.contains(r.group) || badges.count >= 6 { continue }
+            if skipGroups.contains(r.group) || seen.contains(r.group) || badges.count >= cap { continue }
             seen.insert(r.group)
             badges.append(r.file)
         }
@@ -113,7 +118,8 @@ public enum StreamBadges {
     static let reJoiners = rx(#"[+,&/\s]|and"#)
     static let flagLangs: [(String, String)] = [
         ("🇬🇧", "English"), ("🇺🇸", "English"), ("🇫🇷", "French"), ("🇮🇹", "Italian"), ("🇪🇸", "Spanish"), ("🇩🇪", "German"),
-        ("🇮🇳", "Hindi"), ("🇵🇱", "Polish"), ("🇧🇷", "Portuguese"), ("🇷🇺", "Russian"), ("🇯🇵", "Japanese"), ("🇰🇷", "Korean"),
+        ("🇮🇳", "Hindi"), ("🇵🇱", "Polish"), ("🇧🇷", "Portuguese"), ("🇵🇹", "Portuguese"), ("🇷🇺", "Russian"), ("🇯🇵", "Japanese"),
+        ("🇰🇷", "Korean"), ("🇳🇱", "Dutch"), ("🇨🇳", "Chinese"), ("🇹🇼", "Chinese"), ("🇸🇦", "Arabic"), ("🇹🇷", "Turkish"), ("🇲🇽", "Latino"),
     ]
 
     /// One pattern per add-on name, made once: every row used to compile its add-on's name into
@@ -137,7 +143,8 @@ public enum StreamBadges {
     /// The row sits under its add-on's heading and beside its own plate, so the name only has to
     /// say which RELEASE this is.
     public static func cleanName(_ raw: String, addonName: String?) -> String {
-        var t = strip(reEmoji, raw.replacingOccurrences(of: "\n", with: " "))
+        // a debrid mark ("[TB⚡]", "[RD+]") says ready or not; the card says that in words
+        var t = strip(reEmoji, strip(reDebTag, raw.replacingOccurrences(of: "\n", with: " ")))
         if let a = addonName, !a.trimmingCharacters(in: .whitespaces).isEmpty {
             t = strip(namePatterns.pattern(a), t)
         }
@@ -149,6 +156,7 @@ public enum StreamBadges {
         return parts.joined(separator: " · ").trimmingCharacters(in: CharacterSet(charactersIn: "·•|,- "))
     }
 
+    static let reDebTag = rx(#"\[[A-Za-z]{2,3} ?(?:\x{26A1}|\+|\x{2B07}|\x{23F3}|download|\x{1F504})[^\]]*\]"#)
     static let reBareRes = rx(#"^(hd|sd|fhd|uhd|full\s*hd|ultra\s*hd)$"#)
     static let reJargon = rx(#"\b(clearkey|clear\s*key|mpeg-?dash|dash|hls|m3u8|mpd|drm)\b"#)
     static let reOnlyHere = rx(#"plays?\s+only\s+in\s+nebula(\s+player)?"#)
@@ -185,16 +193,22 @@ public enum StreamBadges {
         return "\(Int((Double(n) / 1_048_576).rounded())) MB"
     }
 
-    static func langsIn(_ raw: String) -> String {
+    /// The languages a row names, in words then flags, each once, `max` at most (the web's streamLangList).
+    public static func langList(_ raw: String, max: Int) -> [String] {
         var out: [String] = []
         let ns = raw as NSString
-        for m in reLang.matches(in: raw, options: [], range: NSRange(location: 0, length: ns.length)) where out.count < 4 {
-            var n = ns.substring(with: m.range(at: 1)).split(whereSeparator: { $0 == " " }).joined(separator: " ").lowercased()
+        for m in reLang.matches(in: raw, options: [], range: NSRange(location: 0, length: ns.length)) where out.count < max {
+            var n = ns.substring(with: m.range(at: 1)).split(whereSeparator: { $0.isWhitespace }).joined(separator: " ").lowercased()
             n = n.prefix(1).uppercased() + n.dropFirst()
             if n == "Dual audio" { n = "Dual Audio" }
             if !out.contains(n) { out.append(n) }
         }
-        for (f, n) in flagLangs where out.count < 4 && raw.contains(f) && !out.contains(n) { out.append(n) }
+        for (f, n) in flagLangs where out.count < max && raw.contains(f) && !out.contains(n) { out.append(n) }
+        return out
+    }
+
+    static func langsIn(_ raw: String) -> String {
+        let out = langList(raw, max: 4)
         if out.isEmpty { return "" }
         return out.prefix(3).joined(separator: " + ") + (out.count > 3 ? " +\(out.count - 3)" : "")
     }
@@ -259,6 +273,8 @@ public struct StreamRowText: Equatable, Sendable {
     public var name: String
     public var desc: String
     public var facts: String
+    /// The same row as a release card (Settings › Streams › Stream cards).
+    public var card: ReleaseCard
 
     public init(_ stream: StreamItem, addonName: String?) {
         let raw = stream.name + "\n" + stream.title + "\n" + stream.fileName
@@ -271,5 +287,6 @@ public struct StreamRowText: Equatable, Sendable {
         name = StreamBadges.cleanName(stream.name, addonName: addonName)
         desc = StreamBadges.cleanDesc(f.desc)
         facts = f.line
+        card = ReleaseCard(stream, addonName: addonName, name: name, desc: desc, facts: f, plate: plate, fired: match.fired)
     }
 }

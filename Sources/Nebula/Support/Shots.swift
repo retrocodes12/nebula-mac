@@ -64,6 +64,37 @@ enum Shots {
                 await pause(1.2)
                 await snap(window, dir, "10\(n == 1 ? "b" : "c")-settings-\(section)")
             }
+            // stream card designs: a film's streams page as Release, One line and Classic (a planted list, no add-on
+            // asked), then Settings › Streams — the gallery, and Custom with its controls and live card
+            let wasStyle = m.prefs.streamStyle, wasCustom = m.prefs.streamCustom
+            CardShots.plant(m)
+            for (name, style) in [("04b-cards-release", "release"), ("04c-cards-line", "line"), ("04d-cards-classic", "classic")] {
+                m.prefs.streamStyle = style
+                m.select(.home)
+                m.push(.streams(CardShots.target))
+                await settle(atLeast: 3) { true }
+                await snap(window, dir, name)
+                m.path.removeAll()
+            }
+            m.plantedStreams = nil
+            m.prefs.streamStyle = "release"
+            m.select(.home); await pause(0.5)
+            m.select(.settings); await settle(atLeast: 1.5) { true }
+            NotificationCenter.default.post(name: SettingsView.shotsScroll, object: "streams")
+            await pause(1.2)
+            await snap(window, dir, "10e-settings-cards")
+            m.prefs.streamCustom = CardShots.customShot; m.prefs.streamStyle = "custom"
+            m.select(.home); await pause(0.5)
+            m.select(.settings); await settle(atLeast: 1.5) { true }
+            NotificationCenter.default.post(name: SettingsView.shotsScroll, object: "streams")
+            await pause(1.2)
+            await snap(window, dir, "10f-settings-cards-custom")
+            NotificationCenter.default.post(name: SettingsView.shotsScroll, object: StreamCardSettings.customId)
+            await pause(1.2)
+            await snap(window, dir, "10g-settings-custom-controls")
+            m.prefs.streamCustom = wasCustom; m.prefs.streamStyle = wasStyle
+            m.select(.home); await pause(0.5)
+            m.select(.settings); await pause(1)
             // the supporters' perks, as a planted Founder (nothing reaches the cloud): the accent row with the Plus
             // colours and the picker, the gold ring, the vote with one's own ballot in, the month's recap
             let wasAccent = m.prefs.accent

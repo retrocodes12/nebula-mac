@@ -15,6 +15,8 @@ struct StreamsView: View {
     /// Twelve seconds have gone with someone still asking: say that some take up to a minute.
     @State private var slow = false
     @State private var fresh = false
+    /// Bumped each time the page shows, so the stream card design is read again.
+    @State private var cardsRead = 0
     /// How far the art runs up under a phone's status bar (0 on a Mac).
     @Environment(\.topBleed) private var bleed
     /// The series lookup for a page opened from Continue watching, which runs beside the streams.
@@ -50,24 +52,36 @@ struct StreamsView: View {
                             ForEach(sections) { s in Chip(text: "\(s.addon.name) · \(s.streams.count)", on: filter == s.id) { filter = s.id } }
                         }
                     }
+                    // the design the rows are drawn in (Settings › Streams › Stream cards; nil = Classic), read again
+                    // whenever the page shows — Settings may have changed it meanwhile
+                    let _ = cardsRead
+                    let card = model.prefs.streamCard
                     ForEach(order(sections).filter { filter == nil || filter == $0.id }) { s in
                         // rows line their names up behind a plate when any row in the section has one
                         let plates = s.plates
                         VStack(alignment: .leading, spacing: 10) {
-                            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                                Text(s.addon.name).scaledFont(size: 16, weight: .semibold).foregroundStyle(Theme.ink)
-                                Text("\(s.streams.count)").scaledFont(size: 12, design: .monospaced).foregroundStyle(Theme.label3)
+                            // a design that names the add-on on every card needs no heading for it
+                            if !(card?.addon ?? false) {
+                                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                    Text(s.addon.name).scaledFont(size: 16, weight: .semibold).foregroundStyle(Theme.ink)
+                                    Text("\(s.streams.count)").scaledFont(size: 12, design: .monospaced).foregroundStyle(Theme.label3)
+                                }
                             }
                             // lazy: an add-on can answer with a hundred rows, and only the ones on
                             // screen need to exist
-                            LazyVStack(spacing: 6) {
+                            LazyVStack(spacing: card == nil ? 6 : card!.dense ? 8 : 10) {
                                 ForEach(Array(s.streams.enumerated()), id: \.offset) { i, st in
                                     let key = s.id + "#\(i)"
-                                    StreamRow(stream: st, text: i < s.rows.count ? s.rows[i] : StreamRowText(st, addonName: s.addon.name),
-                                              plateSlot: plates, busy: waiting == key) { play(st, from: s.addon, key: key) }
-                                        // a row is drawn again only when what it shows changed — not for
-                                        // every other section landing or another row's tap
-                                        .equatable()
+                                    let text = i < s.rows.count ? s.rows[i] : StreamRowText(st, addonName: s.addon.name)
+                                    // a row is drawn again only when what it shows changed — not for
+                                    // every other section landing or another row's tap
+                                    if let sp = card {
+                                        StreamCard(stream: st, text: text, spec: sp, addonName: s.addon.name, busy: waiting == key) { play(st, from: s.addon, key: key) }
+                                            .equatable()
+                                    } else {
+                                        StreamRow(stream: st, text: text, plateSlot: plates, busy: waiting == key) { play(st, from: s.addon, key: key) }
+                                            .equatable()
+                                    }
                                 }
                             }
                         }
@@ -98,6 +112,7 @@ struct StreamsView: View {
         .background(Theme.bg)
         .bleedsUnderStatusBar()
         .overlay(alignment: .topLeading) { BackButton().padding(.leading, 22).padding(.top, Theme.backTop) }
+        .onAppear { cardsRead &+= 1 }
         .onDisappear {
             // Back while a tap waited for the series: that tap is void
             waitTask?.cancel(); waitTask = nil; waiting = nil
@@ -145,6 +160,11 @@ struct StreamsView: View {
     /// Asks every add-on again. What came back before stays on screen while it does, and a
     /// section that answers again replaces its old self.
     private func load() async {
+        // the screenshot rig's planted list (CardShots): no add-on is asked
+        if let planted = model.plantedStreams {
+            sections = planted; answered = planted.count; unreachable = 0; asking = []; loading = false
+            return
+        }
         loading = true
         asking = []; slow = false
         let slowTimer = Task {
@@ -287,10 +307,31 @@ struct StreamRow: View, Equatable {
     }
 
     var body: some View {
+        Button(action: action) {
+            ClassicRowBody(text: text, plateSlot: plateSlot, busy: busy, hover: hover)
+        }
+        .buttonStyle(.plain)
+        .onHover { hover = $0 }
+        .contextMenu {
+            Button("Play") { action() }
+            Button("Copy the stream’s address") {
+                Platform.copy(stream.url)
+            }
+        }
+    }
+}
+
+/// The Classic row's look with no button around it (the list's rows and the Settings preview).
+struct ClassicRowBody: View {
+    let text: StreamRowText
+    var plateSlot = true
+    var busy = false
+    var hover = false
+
+    var body: some View {
         let plate = text.plate
         let name = text.name
         let desc = text.desc
-        Button(action: action) {
             HStack(spacing: 16) {
                 // the plate says what the resolution is; with none known there is no plate — a
                 // box holding a dash said nothing and looked like a broken badge
@@ -321,15 +362,6 @@ struct StreamRow: View, Equatable {
             .background(RoundedRectangle(cornerRadius: 12).fill(hover ? Theme.surface2 : Theme.surface))
             .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(hover ? Color.white.opacity(0.5) : Theme.line))
             .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .onHover { hover = $0 }
-        .contextMenu {
-            Button("Play") { action() }
-            Button("Copy the stream’s address") {
-                Platform.copy(stream.url)
-            }
-        }
     }
 }
 

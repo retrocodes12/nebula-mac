@@ -127,6 +127,20 @@ public final class Prefs: @unchecked Sendable {
         set { put("skip", newValue) }
     }
 
+    /// Settings › Streams › Stream cards: the design the list draws ("release" by default; "classic" = the old row).
+    /// Device-local, as on the web.
+    public var streamStyle: String {
+        get { StreamCards.style(get("streamStyle") as? String) }
+        set { put("streamStyle", StreamCards.style(newValue)) }
+    }
+    /// The Custom design as saved (layout, dense, each part 0/1); nil until Custom is first chosen.
+    public var streamCustom: JSONObject? {
+        get { (get("streamCustom") as? JSONObject).flatMap { $0.isEmpty ? nil : $0 } }
+        set { put("streamCustom", newValue ?? [:]) }
+    }
+    /// The spec the stream list draws, nil for Classic.
+    public var streamCard: StreamCards.Spec? { StreamCards.spec(style: streamStyle, custom: streamCustom) }
+
     // MARK: synced documents (stored beside the prefs, merged by Cloud)
 
     /// The subtitle look, every key present. `subStyleChosen` false = never chosen anywhere: the

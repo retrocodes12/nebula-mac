@@ -262,6 +262,13 @@ jobs:
           SETTLE=8 shot autoplay-card --tab home --autoplay card
           SETTLE=20 shot autoplay-streams --tab home --page streams --autoplay on
           SETTLE=4 shot autoplay-off --tab home --autoplay off
+          # stream card designs: a planted film's streams page as Release, One line and Custom, then Settings › Streams
+          SETTLE=10 shot cards-release --tab home --cards release --cards-page list
+          SETTLE=10 shot cards-line --tab home --cards line --cards-page list
+          SETTLE=10 shot cards-custom-list --tab home --cards custom --cards-page list
+          SETTLE=10 shot cards-settings --tab settings --cards release --cards-page settings
+          SETTLE=10 shot cards-settings-custom --tab settings --cards custom --cards-page custom
+          SETTLE=4 shot cards-back --tab home --cards release
           # who's watching with a PIN on the second profile, then its PIN screen (last: the planted profile stays)
           SETTLE=8 shot who-locked --tab home --who list
           SETTLE=8 shot who-pin --tab home --who pin

@@ -92,6 +92,9 @@ struct SettingsView: View {
                     }
                 }
 
+                // how each stream in a streams page is drawn: the designs with live previews, and Custom
+                section("Streams", id: "streams") { StreamCardSettings() }
+
                 #if os(iOS)
                 // the iPhone only: Play on a film or an episode starts its best stream (AutoplaySettings, the phone's shell)
                 section("Autoplay the best stream", id: "autoplay") { AutoplaySettings() }
