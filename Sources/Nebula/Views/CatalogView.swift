@@ -84,8 +84,13 @@ struct CatalogView: View {
 struct LibraryView: View {
     @EnvironmentObject var model: AppModel
     @State private var type: String?
+    @ObservedObject private var downloads = Downloads.shared
 
     var body: some View {
+        if model.libraryShowsDownloads { DownloadsList(switchBack: { model.libraryShowsDownloads = false }) } else { listBody }
+    }
+
+    @ViewBuilder private var listBody: some View {
         let all = model.library.list()
         let types = Array(Set(all.map(\.type))).sorted()
         let selected = type.flatMap { types.contains($0) ? $0 : nil }
@@ -95,6 +100,10 @@ struct LibraryView: View {
                 HStack(alignment: .firstTextBaseline, spacing: 10) {
                     Text("My List").scaledFont(size: 30, weight: .bold).foregroundStyle(Theme.ink)
                     Text("\(all.count)").scaledFont(size: 13, design: .monospaced).foregroundStyle(Theme.label3)
+                    Spacer()
+                    if !downloads.mine(model.viewerId).isEmpty {
+                        Chip(text: "Downloads · \(downloads.mine(model.viewerId).count)", on: false) { model.libraryShowsDownloads = true }
+                    }
                 }
                 .padding(.top, 56)
                 if types.count > 1 {

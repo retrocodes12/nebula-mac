@@ -46,6 +46,12 @@ struct StreamsView: View {
                     if !loading && !sections.isEmpty && unreachable > 0 { partialNote }
                     // rows are on screen and someone is still asking: one line names them
                     if !sections.isEmpty && !asking.isEmpty { waitLine }
+                    // picking a source to download (Downloads.swift): only rows that can be kept are listed
+                    if target.save {
+                        Text(target.seasonRest.isEmpty ? "Choose a source to download"
+                             : "Choose a source for Season \(target.episode?.season ?? 0) — the other episodes get the same one")
+                            .scaledFont(size: 14, weight: .semibold).foregroundStyle(Theme.ink)
+                    }
                     if sections.count > 1 {
                         EdgeScroller {
                             Chip(text: "All · \(total)", on: filter == nil) { filter = nil }
@@ -56,7 +62,7 @@ struct StreamsView: View {
                     // whenever the page shows — Settings may have changed it meanwhile
                     let _ = cardsRead
                     let card = model.prefs.streamCard
-                    ForEach(order(sections).filter { filter == nil || filter == $0.id }) { s in
+                    ForEach(order(savableOnly(sections)).filter { filter == nil || filter == $0.id }) { s in
                         // rows line their names up behind a plate when any row in the section has one
                         let plates = s.plates
                         VStack(alignment: .leading, spacing: 10) {
@@ -122,7 +128,7 @@ struct StreamsView: View {
         }
         .task {
             #if os(iOS)
-            if !apTried {
+            if !apTried && !target.save {           // never while picking a source to download
                 apTried = true
                 apPick = AutoplayPick.begin(model: model, target: opened) { row in play(row.stream, from: row.addon, key: "autoplay", auto: true) }
             }
@@ -140,7 +146,35 @@ struct StreamsView: View {
     /// A tap plays — but opened from Continue watching, not before the series lookup is in
     /// (or three seconds have gone): without the episode list the player has no Next episode
     /// and no autoplay, and a quick tap used to start it with neither.
+    /// While the page picks a source to download, the rows that can be kept, in their sections.
+    private func savableOnly(_ list: [StreamSection]) -> [StreamSection] {
+        guard target.save else { return list }
+        return list.compactMap { s in
+            var c = s
+            let keep = s.streams.indices.filter { DownloadPlan.savable(s.streams[$0].url) && s.streams[$0].clearKeys.isEmpty }
+            c.streams = keep.map { s.streams[$0] }
+            c.rows = keep.compactMap { $0 < s.rows.count ? s.rows[$0] : nil }
+            return c.streams.isEmpty ? nil : c
+        }
+    }
+
+    /// The row picked while the page picks a source to download.
+    private func save(_ st: StreamItem, from addon: Addon) {
+        let t = target, here = Route.streams(opened)
+        model.say("Checking this stream…")
+        Task {
+            let why = await model.downloads.add(st, viewer: model.viewerId, type: t.type, id: t.id, name: model.savedName(t),
+                                                poster: t.item.poster, addon: addon, subLangs: [model.prefs.subLang])
+            if let w = why { model.say(w, error: true); return }
+            if model.path.last == here { model.path.removeLast() }
+            if t.seasonRest.isEmpty { model.say("Downloading · My List › Downloads"); return }
+            model.say("Downloading — finding the same source for the rest of the season…")
+            await model.queueSeason(t.seasonRest, picked: st, addon: addon, target: t)
+        }
+    }
+
     private func play(_ st: StreamItem, from addon: Addon, key: String, auto: Bool = false) {
+        if target.save { save(st, from: addon); return }
         guard waiting == nil else { return }
         guard let h = hydration, needsSeries else {
             model.play(st, target: target, from: addon, fresh: fresh, auto: auto)

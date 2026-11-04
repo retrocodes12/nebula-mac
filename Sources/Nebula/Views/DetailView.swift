@@ -131,7 +131,19 @@ struct DetailView: View {
         .disabled(loading && meta == nil && item.type == "series")
     }
 
+    @ObservedObject private var downloads = Downloads.shared
+
     @ViewBuilder private var roundActions: some View {
+            if !isSeries && !loading && item.type == "movie" {
+                // Download (Downloads.swift): pick a source; once kept, Play plays the copy
+                let r = downloads.find(model.viewerId, item.type, item.id)
+                RoundAction(icon: r == nil ? "arrow.down.circle" : r!.phase == .done ? "checkmark.circle.fill" : r!.phase == .failed ? "exclamationmark.circle" : "arrow.down.circle.dotted",
+                            label: r == nil ? "Download" : r!.phase == .done ? "Downloaded" : r!.phase == .failed ? "Download failed · Retry" : "Downloading · " + downloads.line(r!),
+                            on: r?.phase == .done) {
+                    if let r { if r.phase == .failed { downloads.resume(r.key) } else if r.phase != .done { model.libraryShowsDownloads = true; model.select(.library) } }
+                    else { model.push(.streams(StreamsTarget(type: item.type, id: item.id, item: full, addonUrl: addonUrl, save: true))) }
+                }
+            }
             let saved = model.library.contains(item.type, item.id)
             RoundAction(icon: saved ? "checkmark" : "plus", label: saved ? "Remove from My List" : "Add to My List", on: saved) {
                 let nowIn = model.library.toggle(full, addonUrl: addonUrl)
@@ -164,6 +176,27 @@ struct DetailView: View {
         } else {
             model.push(.streams(StreamsTarget(type: item.type, id: item.id, item: full, addonUrl: addonUrl)))
         }
+    }
+
+    /// "Download Season N · X episodes": two or more aired episodes of the season on screen not kept yet.
+    @ViewBuilder private func seasonDownload(_ list: [Episode], _ m: FullMeta) -> some View {
+        let today = String(ISO8601DateFormatter().string(from: Date()).prefix(10))
+        let todo = list.filter { e in
+            let d = String((e.released ?? "").prefix(10))
+            return (d.count < 10 || d <= today) && downloads.find(model.viewerId, item.type, e.id) == nil
+        }
+        if let busy = downloads.seasonBusy {
+            HStack(spacing: 8) { ProgressView().controlSize(.small); Text("Finding the same source · " + busy).scaledFont(size: 13).foregroundStyle(Theme.label2) }
+        } else if todo.count >= 2, let s = todo.first?.season {
+            Chip(text: (s == 0 ? "Download the specials" : "Download Season \(s)") + " · \(todo.count) episodes", on: false) { downloadEpisodes(todo, m) }
+        }
+    }
+
+    /// Pick a source for the first; the rest (a season) follow with the same one.
+    private func downloadEpisodes(_ eps: [Episode], _ m: FullMeta) {
+        guard let first = eps.first else { return }
+        model.push(.streams(StreamsTarget(type: item.type, id: first.id, item: full, addonUrl: metaAddon?.manifestUrl ?? addonUrl, episode: first,
+                                          videos: m.videos, save: true, seasonRest: Array(eps.dropFirst()))))
     }
 
     private func openEpisode(_ ep: Episode, _ m: FullMeta) {
@@ -225,11 +258,12 @@ struct DetailView: View {
                     ForEach(seasons, id: \.self) { s in Chip(text: s == 0 ? "Specials" : "Season \(s)", on: s == cur) { season = s } }
                 }
             }
+            seasonDownload(list, m)
             // the rows read their ticks from the store as they draw; a fresh identity for every
             // progress change rebuilt the whole list for one tick
             LazyVStack(spacing: 2) {
                 ForEach(list) { ep in
-                    EpisodeRow(ep: ep, type: item.type, upNext: ep.id == upNextId) { openEpisode(ep, m) }
+                    EpisodeRow(ep: ep, type: item.type, upNext: ep.id == upNextId, download: { downloadEpisodes([ep], m) }) { openEpisode(ep, m) }
                 }
             }
         }
@@ -241,8 +275,11 @@ struct EpisodeRow: View {
     let ep: Episode
     let type: String
     let upNext: Bool
+    /// Download this episode (the menu offers it; nil = no Downloads here).
+    var download: (() -> Void)? = nil
     let action: () -> Void
     @State private var hover = false
+    @ObservedObject private var downloads = Downloads.shared
 
     var body: some View {
         let rec = model.progress.get(type, ep.id)
@@ -270,6 +307,10 @@ struct EpisodeRow: View {
                         Text(ep.episode.map { "E\($0)" } ?? "•").scaledFont(size: 11, weight: .semibold, design: .monospaced).foregroundStyle(upNext ? model.accent : Theme.label3)
                         if upNext { Text("UP NEXT").scaledFont(size: 10, weight: .semibold, design: .monospaced).tracking(1).foregroundStyle(model.accent) }
                         if done { Image(systemName: "checkmark.circle.fill").scaledFont(size: 12).foregroundStyle(model.accent) }
+                        if let d = downloads.find(model.viewerId, type, ep.id) {
+                            Text(d.phase == .done ? "DOWNLOADED" : d.phase == .failed ? "DOWNLOAD FAILED" : d.total > 0 ? "\(Int(Double(d.bytes) * 100 / Double(d.total)))%" : "WAITING")
+                                .scaledFont(size: 10, weight: .semibold, design: .monospaced).tracking(1).foregroundStyle(Theme.label2)
+                        }
                         Spacer()
                         if let d = airDate { Text(d).scaledFont(size: 11, design: .monospaced).foregroundStyle(Theme.label3) }
                     }
@@ -288,6 +329,9 @@ struct EpisodeRow: View {
             Button("Play") { action() }
             if done || part != nil { Button("Mark as not watched") { model.progress.markUnwatched(type, ep.id) } }
             if !done { Button("Mark as watched") { model.progress.markWatched(type, ep.id) } }
+            if let d = downloads.find(model.viewerId, type, ep.id) {
+                Button(d.phase == .done ? "Remove the download" : "Cancel the download", role: .destructive) { downloads.remove(d.key) }
+            } else if let download { Button("Download") { download() } }
         }
     }
 

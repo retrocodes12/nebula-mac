@@ -27,6 +27,10 @@ struct StreamsTarget: Hashable {
     var addonUrl: String
     var episode: Episode?
     var videos: [Episode] = []
+    /// The page picks a source to DOWNLOAD instead of to play (Downloads.swift).
+    var save = false
+    /// With [save]: the other episodes of the season, to follow with the same source once this one is picked.
+    var seasonRest: [Episode] = []
 }
 
 enum Route: Hashable {
@@ -108,6 +112,8 @@ final class AppModel: ObservableObject {
     @Published var whoOpen = false
 
     @Published var tab: Tab = .home
+    /// My List shows Downloads (a title page's Download button sends the viewer there while one is under way).
+    @Published var libraryShowsDownloads = false
     @Published var path: [Route] = []
     @Published var player: PlayRequest? {
         // the pages under a closed player catch up on what it wrote while it was up
@@ -300,7 +306,57 @@ final class AppModel: ObservableObject {
     /// Every page goes on through here. A double tap or click used to push the same page twice,
     /// so Back seemed to do nothing; a page equal to the one on top is refused.
     func push(_ r: Route) {
+        // a title kept on this device plays its own copy (Downloads.swift) — the Android app does the same
+        if case .streams(let t) = r, !t.save, let s = downloads.saved(viewerId, t.type, t.id) { playSaved(s, target: t); return }
         if path.last != r { path.append(r) }
+    }
+
+    // MARK: downloads
+
+    let downloads = Downloads.shared
+
+    func playSaved(_ r: SavedRow, target: StreamsTarget, fresh: Bool = false) {
+        var st = StreamItem(name: r.streamName, title: r.streamTitle, url: downloads.fileURL(r).absoluteString)
+        st.fileName = r.fileName
+        st.subtitles = r.subs.map { SubTrack(url: downloads.subURL(r, $0).absoluteString, lang: $0.lang) }
+        play(st, target: target, from: nil, fresh: fresh)
+    }
+
+    /// "Show · S1E2 · Name" — the name a saved episode keeps (DownloadPlan.nameParts reads it back).
+    func savedName(_ t: StreamsTarget) -> String {
+        guard let ep = t.episode else { return t.item.name }
+        return "\(t.item.name) · S\(ep.season)E\(ep.episode ?? 0)" + (ep.name.isEmpty ? "" : " · \(ep.name)")
+    }
+
+    /// The rest of a season after its first episode's download started: the same release from the same add-on (its file
+    /// name, else its binge group, else the same quality), one episode at a time — the Android app's SeasonDownload.
+    func queueSeason(_ rest: [Episode], picked: StreamItem, addon: Addon, target: StreamsTarget) async {
+        func res(_ s: StreamItem) -> String {
+            let t = (s.name + " " + s.title).lowercased()
+            if t.range(of: #"\b(2160p|4k|uhd)\b"#, options: .regularExpression) != nil { return "4K" }
+            if t.range(of: #"\b1080p\b"#, options: .regularExpression) != nil { return "1080" }
+            if t.range(of: #"\b720p\b"#, options: .regularExpression) != nil { return "720" }
+            return ""
+        }
+        let file = ReleaseKey.of(picked), group = picked.bingeGroup, q = res(picked)
+        let season = target.episode?.season ?? 0, total = rest.count + 1
+        var queued = 1, missing: [String] = []
+        for (n, ep) in rest.enumerated() {
+            downloads.seasonBusy = "Season \(season) · \(n + 2) of \(total)"
+            if downloads.find(viewerId, target.type, ep.id) != nil { queued += 1; continue }
+            let list = ((try? await stremio.loadStreams(base: addon.base, type: target.type, id: ep.id)) ?? []).filter { DownloadPlan.savable($0.url) }
+            let pick = list.first { !file.isEmpty && ReleaseKey.of($0) == file }
+                ?? list.first { !group.isEmpty && $0.bingeGroup == group }
+                ?? list.first { !q.isEmpty && res($0) == q }
+            var t = target; t.id = ep.id; t.episode = ep
+            guard let s = pick else { missing.append(ep.name.isEmpty ? "S\(ep.season)E\(ep.episode ?? 0)" : ep.name); continue }
+            let why = await downloads.add(s, viewer: viewerId, type: target.type, id: ep.id, name: savedName(t), poster: target.item.poster,
+                                          addon: addon, subLangs: [prefs.subLang])
+            if why == nil { queued += 1 } else { missing.append(ep.name.isEmpty ? "S\(ep.season)E\(ep.episode ?? 0)" : ep.name) }
+        }
+        downloads.seasonBusy = nil
+        say(missing.isEmpty ? "Season \(season): all \(queued) episodes downloading · My List › Downloads"
+            : "\(queued) of \(total) downloading · no matching source for \(missing.count) (\(missing.prefix(2).joined(separator: ", "))\(missing.count > 2 ? "…" : "")) — download those from their own menu")
     }
 
     func select(_ t: Tab) {

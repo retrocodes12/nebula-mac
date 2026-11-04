@@ -74,7 +74,16 @@ final class PhoneDelegate: NSObject, UIApplicationDelegate {
         }
         // no audio session here: activating one at launch stops whatever the viewer was
         // listening to just for opening the app — it starts with playback (PhoneRoot)
+        _ = Downloads.shared          // a background download session reconnects to the tasks it kept
         return true
+    }
+
+    /// Downloads finished (or need attention) while the app was away: the session's events are delivered, then this
+    /// hand-off tells iOS the app is done with them.
+    func application(_ application: UIApplication, handleEventsForBackgroundURLSession identifier: String,
+                     completionHandler: @escaping () -> Void) {
+        guard identifier == Downloads.sessionId else { completionHandler(); return }
+        Downloads.shared.backgroundDone = completionHandler
     }
 }
 
