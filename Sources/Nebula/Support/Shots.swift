@@ -84,8 +84,8 @@ enum Shots {
             await pause(1.2)
             await snap(window, dir, "10e-settings-cards")
             m.prefs.streamCustom = CardShots.customShot; m.prefs.streamStyle = "custom"
-            m.select(.home); await pause(0.5)
-            m.select(.settings); await settle(atLeast: 1.5) { true }
+            NotificationCenter.default.post(name: StreamCardSettings.reread, object: nil)
+            await pause(1)
             NotificationCenter.default.post(name: SettingsView.shotsScroll, object: "streams")
             await pause(1.2)
             await snap(window, dir, "10f-settings-cards-custom")
@@ -93,8 +93,8 @@ enum Shots {
             await pause(1.2)
             await snap(window, dir, "10g-settings-custom-controls")
             m.prefs.streamCustom = wasCustom; m.prefs.streamStyle = wasStyle
-            m.select(.home); await pause(0.5)
-            m.select(.settings); await pause(1)
+            NotificationCenter.default.post(name: StreamCardSettings.reread, object: nil)
+            await pause(0.5)
             // the supporters' perks, as a planted Founder (nothing reaches the cloud): the accent row with the Plus
             // colours and the picker, the gold ring, the vote with one's own ballot in, the month's recap
             let wasAccent = m.prefs.accent

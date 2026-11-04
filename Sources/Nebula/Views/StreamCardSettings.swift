@@ -11,6 +11,8 @@ struct StreamCardSettings: View {
 
     /// The screenshot rig scrolls Settings to the Custom controls by this id.
     static let customId = "streams-custom"
+    /// The screenshot rig changed the design behind the page's back: read it again.
+    static let reread = Notification.Name("nebula.shots.streamCards")
 
     var body: some View {
         Panel {
@@ -62,10 +64,13 @@ struct StreamCardSettings: View {
                 .padding(.horizontal, 16).padding(.vertical, 12)
             }
         }
-        .onAppear {
-            style = model.prefs.streamStyle
-            custom = StreamCards.custom(model.prefs.streamCustom)
-        }
+        .onAppear(perform: read)
+        .onReceive(NotificationCenter.default.publisher(for: StreamCardSettings.reread)) { _ in read() }
+    }
+
+    private func read() {
+        style = model.prefs.streamStyle
+        custom = StreamCards.custom(model.prefs.streamCustom)
     }
 
     private func tile(_ d: StreamCards.Design) -> some View {

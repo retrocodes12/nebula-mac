@@ -164,6 +164,8 @@ enum Launch {
         if let style = value("--cards") {
             if style == "custom" { model.prefs.streamCustom = CardShots.customShot }
             model.prefs.streamStyle = style
+            // Settings may already be on screen (the last tab is kept), drawn with the design before this one
+            NotificationCenter.default.post(name: StreamCardSettings.reread, object: nil)
         }
         if let page = value("--cards-page") {
             if page == "list" {
