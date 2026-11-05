@@ -121,6 +121,26 @@ public final class Prefs: @unchecked Sendable {
         get { (get("discover") as? JSONObject) ?? [:] }
         set { put("discover", newValue) }
     }
+    /// Up next in Continue watching (ContinueNext.swift): after a finished episode, the next one waits in the row.
+    public var cwNext: Bool {
+        get { (get("cwNext") as? Bool) ?? true }
+        set { put("cwNext", newValue) }
+    }
+    /// Offer an Up next that is not out yet (its day on the card). Off by default, as on the web and Android.
+    public var cwUnaired: Bool {
+        get { (get("cwUnaired") as? Bool) ?? false }
+        set { put("cwUnaired", newValue) }
+    }
+    /// Closed in the middle of something: offer it back at the next start.
+    public var resumePrompt: Bool {
+        get { (get("resumePrompt") as? Bool) ?? true }
+        set { put("resumePrompt", newValue) }
+    }
+    /// The content advisory ("Rated · UA", "Violence · Severe") for a few seconds as a title starts.
+    public var advisory: Bool {
+        get { (get("advisory") as? Bool) ?? true }
+        set { put("advisory", newValue) }
+    }
     /// Skip intros and recaps: "button" (offer it), "auto" (skip by itself) or "off".
     public var skipIntro: String {
         get { let v = (get("skip") as? String) ?? "button"; return SkipSegments.modes.contains(v) ? v : "button" }

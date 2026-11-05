@@ -155,6 +155,8 @@ enum PlaybackRules {
     static func doneRecord(target: StreamsTarget) -> ProgressRec {
         var r = ProgressRec(type: target.type, id: target.id)
         r.done = true
+        // what it was stays on the tick: Up next in Continue watching is built from it (11-05)
+        r.name = target.item.name; r.poster = target.item.poster; r.back = target.item.background; r.addonUrl = target.addonUrl
         return r
     }
 

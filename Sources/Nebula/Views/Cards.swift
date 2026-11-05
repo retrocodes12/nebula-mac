@@ -139,47 +139,77 @@ func typeLabel(_ type: String) -> String {
     }
 }
 
-/// The wide Continue watching card: the backdrop, how far in, how long is left.
+/// The wide Continue watching card: the backdrop, how far in, how long is left. An Up next card (ContinueNext.swift)
+/// shows the next episode's still, "Up next" — "New episode" when it came out after the last was finished, or the
+/// day it airs — and no bar.
 struct ContinueCard: View {
     @EnvironmentObject var model: AppModel
     let rec: ProgressRec
     @State private var hover = false
 
-    var seriesItem: MetaItem {
-        MetaItem(id: Ids.itemId(type: rec.type, id: rec.id), type: rec.type, name: rec.name, poster: rec.poster, posterShape: rec.shape, background: rec.back)
+    private var item: MetaItem { model.continueItem(rec) }
+    /// "S1 E2" off the episode id, nil for a film.
+    private var tag: String? {
+        guard rec.type == "series", let n = Ids.episodeNumbers(of: rec.id) else { return nil }
+        return n.season.map { "S\($0) E\(n.episode)" } ?? "E\(n.episode)"
+    }
+    private var badge: String {
+        if rec.airs > 0 {
+            let f = DateFormatter(); f.setLocalizedDateFormatFromTemplate("EEE d MMM")
+            return "Airs " + f.string(from: Date(timeIntervalSince1970: Double(rec.airs) / 1000))
+        }
+        return rec.fresh ? "New episode" : "Up next"
     }
 
     var body: some View {
-        Button(action: resume) {
+        Button(action: { model.openContinue(rec) }) {
             VStack(alignment: .leading, spacing: 8) {
                 ZStack(alignment: .bottom) {
-                    RemoteImage(url: rec.back ?? Art.backdrop(seriesItem) ?? rec.poster) { InitialsTile(name: rec.name) }
+                    RemoteImage(url: rec.back ?? Art.backdrop(item) ?? rec.poster) { InitialsTile(name: rec.name) }
                         .frame(width: 300, height: 169)
                         .clipped()
                     LinearGradient(colors: [.clear, .black.opacity(0.7)], startPoint: .center, endPoint: .bottom)
-                    VStack(alignment: .leading, spacing: 7) {
-                        HStack {
-                            Image(systemName: "play.fill").scaledFont(size: 11)
-                            Text(Fmt.left(rec.dur - rec.pos)).scaledFont(size: 11.5, weight: .semibold, design: .monospaced)
+                    if rec.next {
+                        VStack {
+                            HStack {
+                                Spacer()
+                                Text(badge).scaledFont(size: 11, weight: .semibold)
+                                    .foregroundStyle(rec.airs > 0 ? Color.white : Color.black)
+                                    .padding(.horizontal, 8).padding(.vertical, 3)
+                                    .background(rec.airs > 0 ? Color.black.opacity(0.75) : Color.white, in: RoundedRectangle(cornerRadius: 5))
+                            }
                             Spacer()
-                        }
-                        .foregroundStyle(.white)
-                        GeometryReader { g in
-                            ZStack(alignment: .leading) {
-                                Capsule().fill(.white.opacity(0.3))
-                                Capsule().fill(model.accent).frame(width: g.size.width * rec.fraction)
+                            HStack {
+                                Text(tag ?? "Next episode").scaledFont(size: 11.5, weight: .semibold, design: .monospaced).foregroundStyle(.white)
+                                Spacer()
                             }
                         }
-                        .frame(height: 4)
+                        .padding(12)
+                    } else {
+                        VStack(alignment: .leading, spacing: 7) {
+                            HStack {
+                                Image(systemName: "play.fill").scaledFont(size: 11)
+                                Text(Fmt.left(rec.dur - rec.pos)).scaledFont(size: 11.5, weight: .semibold, design: .monospaced)
+                                Spacer()
+                            }
+                            .foregroundStyle(.white)
+                            GeometryReader { g in
+                                ZStack(alignment: .leading) {
+                                    Capsule().fill(.white.opacity(0.3))
+                                    Capsule().fill(model.accent).frame(width: g.size.width * rec.fraction)
+                                }
+                            }
+                            .frame(height: 4)
+                        }
+                        .padding(12)
                     }
-                    .padding(12)
                 }
                 .frame(width: 300, height: 169)
                 .clipShape(RoundedRectangle(cornerRadius: Theme.cardRadius))
                 .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius).strokeBorder(hover ? Color.white : Theme.line, lineWidth: hover ? 2 : 1))
                 VStack(alignment: .leading, spacing: 2) {
                     Text(rec.name.isEmpty ? "Untitled" : rec.name).scaledFont(size: 12.5, weight: .medium).foregroundStyle(Theme.ink).lineLimit(1)
-                    Text((rec.type == "series" ? Ids.episodeKicker(rec.id) : nil) ?? typeLabel(rec.type)).scaledFont(size: 11, design: .monospaced).foregroundStyle(Theme.label3).lineLimit(1)
+                    Text(subline).scaledFont(size: 11, design: .monospaced).foregroundStyle(Theme.label3).lineLimit(1)
                 }
             }
             .scaleEffect(hover ? 1.025 : 1)
@@ -189,14 +219,23 @@ struct ContinueCard: View {
         .buttonStyle(PressStyle())
         .onHover { hover = $0 }
         .contextMenu {
-            Button("Details") { model.open(seriesItem, addonUrl: rec.addonUrl) }
-            Button("Mark as watched") { model.progress.markWatched(rec.type, rec.id) }
-            Button("Remove from Continue Watching") { model.progress.clear(rec.type, rec.id) }
+            if rec.next {
+                if rec.airs == 0 { Button("Play " + (tag ?? "next episode")) { model.openContinue(rec) } }
+                Button("Details") { model.open(item, addonUrl: rec.addonUrl) }
+                Button("Mark " + (tag ?? "it") + " as watched") { model.progress.markWatched(rec.type, rec.id) }
+                Button("Remove from Continue Watching") { model.progress.dismissNext(rec.seriesId) }
+            } else {
+                Button("Resume") { model.openContinue(rec) }
+                Button("Details") { model.open(item, addonUrl: rec.addonUrl) }
+                Button("Mark as watched") { model.progress.markWatched(rec.type, rec.id) }
+                Button("Remove from Continue Watching") { model.progress.clear(rec.type, rec.id) }
+            }
         }
     }
 
-    private func resume() {
-        model.push(.streams(StreamsTarget(type: rec.type, id: rec.id, item: seriesItem, addonUrl: rec.addonUrl)))
+    private var subline: String {
+        if rec.next { return [tag, rec.epName.isEmpty ? nil : rec.epName].compactMap { $0 }.joined(separator: " · ") }
+        return (rec.type == "series" ? Ids.episodeKicker(rec.id) : nil) ?? typeLabel(rec.type)
     }
 }
 

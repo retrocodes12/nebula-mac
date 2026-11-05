@@ -117,8 +117,19 @@ final class AppModel: ObservableObject {
     @Published var path: [Route] = []
     @Published var player: PlayRequest? {
         // the pages under a closed player catch up on what it wrote while it was up
-        didSet { if player == nil && progressPending { progressPending = false; progressVersion += 1 } }
+        didSet {
+            if player == nil && progressPending { progressPending = false; progressVersion += 1 }
+            // what is playing, kept for the next start (AppModelNext.swift): left the normal way, nothing to offer
+            if player?.id != oldValue?.id { markLastPlay(player?.target) }
+        }
     }
+    /// The kept Up next answers (ContinueNext.swift) and the shows being asked for one.
+    let nextUp: NextUpAnswers
+    var nuQueue: [String: ContinueNext.Show] = [:]
+    var nuRunning = false
+    /// The app was closed in the middle of something: offered back once at the start (AppModelNext.swift).
+    @Published var resumeOffer: ProgressRec?
+    var launchLastPlay: JSONObject = [:]
     @Published var toast: Toast?
     @Published var addons: [Addon] = []
     @Published var profile: Profile?
@@ -182,6 +193,8 @@ final class AppModel: ObservableObject {
         progress = ProgressStore(store: store)
         library = LibraryStore(store: store)
         viewers = Viewers(store: store)
+        nextUp = NextUpAnswers(store: store)
+        nextUp.viewers = viewers
         progress.viewers = viewers
         library.viewers = viewers
         addonStore.viewers = viewers
@@ -220,7 +233,10 @@ final class AppModel: ObservableObject {
             let v = viewersRef.current
             Task { await cloud.noteChanged("addons", viewer: v) }
         }
+        // what the last run was playing when it was closed (AppModelNext.swift): read before anything can overwrite it
+        launchLastPlay = store.object("last_play")
         guard live else { return }
+        Task { @MainActor [weak self] in await self?.offerResumeWhenReady() }
         network.pathUpdateHandler = { [weak self] p in
             let up = p.status == .satisfied
             Task { @MainActor in self?.connection(up) }

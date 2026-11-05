@@ -14,6 +14,8 @@ struct DetailView: View {
     @State private var expanded = false
     /// What it follows, what follows it, its spin-offs and remakes (Nebula Cloud, a week's cache).
     @State private var universe: [Universe.Item] = []
+    /// The age rating where this device is ("UA", "PG-13"; Advisory.swift), asked once a title.
+    @State private var age = ""
     /// How far the art runs up under a phone's status bar (0 on a Mac).
     @Environment(\.topBleed) private var bleed
     /// The credits' label column, which widens with a larger text size on a phone.
@@ -74,6 +76,10 @@ struct DetailView: View {
                     ?? m.videos.map(\.season).filter { $0 > 0 }.min() ?? m.videos.first?.season
             }
             loading = false
+            if let tt = Advisory.idOf(item.id) {
+                age = Advisory.cached(tt)?.cert ?? ""
+                if age.isEmpty, let a = await Advisory.load(tt), !Task.isCancelled { age = a.cert }
+            }
             if let id = Universe.idOf(item.id) {
                 universe = Universe.cached(id) ?? []
                 if universe.isEmpty, let got = await Universe.load(id), !Task.isCancelled { universe = got }
@@ -108,6 +114,7 @@ struct DetailView: View {
         p.append(contentsOf: (meta?.genres ?? item.genres).prefix(3).map { $0.uppercased() })
         if let r = meta?.runtime ?? item.runtime { p.append(r) }
         if let y = meta?.releaseInfo ?? item.releaseInfo { p.append(y) }
+        if !age.isEmpty { p.append(age) }
         if let r = meta?.imdbRating ?? item.imdbRating { p.append("★ " + r) }
         return p
     }

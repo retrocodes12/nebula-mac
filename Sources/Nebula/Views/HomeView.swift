@@ -25,7 +25,7 @@ struct HomeView: View {
                 if !heroItems.isEmpty { Hero(items: heroItems) }
                 else { Color.clear.frame(height: 40 + bleed) }
 
-                let cw = model.progress.continueList()
+                let cw = model.continueList()          // with Up next (AppModelNext.swift)
                 if !cw.isEmpty {
                     VStack(alignment: .leading, spacing: 14) {
                         RowHeader(title: "Continue Watching")
@@ -97,6 +97,8 @@ struct Hero: View {
     let items: [(MetaItem, Addon)]
     @State private var index = 0
     @State private var hovering = false
+    /// Featured titles' age ratings (Advisory.swift) — asked for these few only, never for every card in the rows.
+    @State private var ages: [String: String] = [:]
 
     /// Home is what the viewer is looking at: its tab, nothing pushed over it, no film over it,
     /// the app in front. The art used to move on under every other page — and under the player,
@@ -137,6 +139,12 @@ struct Hero: View {
             .padding(.horizontal, Theme.pad).padding(.bottom, 8)
         }
         .frame(height: Theme.heroHeight + bleed)
+        .task(id: item.id) {
+            guard let tt = Advisory.idOf(item.id), ages[tt] == nil else { return }
+            var a = Advisory.cached(tt)
+            if a == nil { a = await Advisory.load(tt) }
+            if let a = a { ages[tt] = a.cert }
+        }
         .onHover { hovering = $0 }
         // moves on by itself while Home is on screen, and holds still while the pointer is over
         // it; keyed on both, so leaving Home stops the clock and coming back starts it again
@@ -182,6 +190,7 @@ struct Hero: View {
         var p = [typeLabel(m.type) == "Films" ? "FILM" : typeLabel(m.type).uppercased()]
         if let g = m.genres.first { p.append(g.uppercased()) }
         if let y = m.releaseInfo { p.append(y) }
+        if let a = Advisory.idOf(m.id).flatMap({ ages[$0] }), !a.isEmpty { p.append(a) }
         if let r = m.imdbRating { p.append("★ " + r) }
         return p
     }

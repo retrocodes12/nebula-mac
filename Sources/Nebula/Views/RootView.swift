@@ -82,6 +82,7 @@ struct RootView: View {
         .environment(\.nebulaAccent, model.accent)
         .preferredColorScheme(.dark)
         .task { await model.loadHome() }
+        .resumeOffer()                     // closed in the middle of something: offered back once (AppModelNext.swift)
         .onAppear(perform: watchEscape)
         .onDisappear {
             if let m = escMonitor { NSEvent.removeMonitor(m); escMonitor = nil }

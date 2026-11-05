@@ -132,9 +132,38 @@ final class PlayerExtras: ObservableObject {
     }
 
     func stop() {
-        skipTask?.cancel(); seekrTask?.cancel()
+        skipTask?.cancel(); seekrTask?.cancel(); advisoryTask?.cancel()
         tiles = [:]
     }
+
+    // MARK: content advisory (11-05; Advisory.swift)
+
+    /// The rows up now ("Rated · UA", "Violence · Severe"), once per film or episode as it first plays.
+    @Published private(set) var advisoryRows: [Advisory.Warn]?
+    private var advisory: Advisory.Answer?
+    private var advisoryShown = false
+    private var advisoryTask: Task<Void, Never>?
+
+    /// From the player's start: ask the cloud for this title (a series answers for its episodes). Setting off: nothing.
+    func startAdvisory(type: String, id: String, on: Bool) {
+        advisoryTask?.cancel()
+        advisory = nil; advisoryShown = false; advisoryRows = nil
+        guard on, type == "movie" || type == "series", let tt = Advisory.idOf(id) else { return }
+        advisoryTask = Task { [weak self] in
+            let a = await Advisory.load(tt)
+            guard !Task.isCancelled else { return }
+            self?.advisory = a
+        }
+    }
+
+    /// Every clock tick: up the first time the picture is really moving (an answer arriving late still shows).
+    func advisoryTick(playing: Bool) {
+        guard playing, !advisoryShown, let a = advisory, !a.rows.isEmpty else { return }
+        advisoryShown = true
+        advisoryRows = a.rows
+    }
+
+    func advisoryDone() { advisoryRows = nil }
 
     /// The picture for a position, or nil while its sheet is still on its way (never blank once
     /// any picture near it has been cut: the nearest one stands in).
@@ -253,6 +282,80 @@ struct SeekrTile: View {
                 .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.white.opacity(0.35), lineWidth: 1))
                 .shadow(color: .black.opacity(0.5), radius: 6)
         }
+    }
+}
+
+/// The content advisory as a title starts — Nuvio's parental guide, its timings: a white line drawn downwards, then
+/// the rows one by one ("Rated · UA" first); held 5 s, then out in reverse (rows bottom first, the line, the box).
+/// The shared player's `pgShow`, Android's `AdvisoryOverlay`. [big]: a Mac window's size; a phone draws Nuvio's.
+struct AdvisoryOverlay: View {
+    let rows: [Advisory.Warn]
+    var big = false
+    let onDone: () -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduce
+    @State private var box = 0.0
+    @State private var line: CGFloat = 0
+    @State private var shown: [Bool]
+
+    init(rows: [Advisory.Warn], big: Bool = false, onDone: @escaping () -> Void) {
+        self.rows = rows; self.big = big; self.onDone = onDone
+        _shown = State(initialValue: Array(repeating: false, count: rows.count))
+    }
+
+    var body: some View {
+        let rowH: CGFloat = big ? 25 : 18, gap: CGFloat = 2, size: CGFloat = big ? 15 : 11
+        let full = rowH * CGFloat(rows.count) + gap * CGFloat(max(0, rows.count - 1))
+        HStack(alignment: .top, spacing: big ? 12 : 10) {
+            RoundedRectangle(cornerRadius: 1).fill(Color.white).frame(width: 3, height: full * line)
+            VStack(alignment: .leading, spacing: gap) {
+                ForEach(rows.indices, id: \.self) { i in
+                    (Text(rows[i].kind).fontWeight(.semibold).foregroundColor(.white.opacity(0.85))
+                     + Text(" · ").foregroundColor(.white.opacity(0.4))
+                     + Text(rows[i].level).foregroundColor(.white.opacity(0.5)))
+                        .font(.system(size: size))
+                        .lineLimit(1)
+                        .frame(height: rowH)
+                        .opacity(i < shown.count && shown[i] ? 1 : 0)
+                }
+            }
+        }
+        .shadow(color: .black.opacity(0.45), radius: 6)
+        .opacity(box)
+        .allowsHitTesting(false)
+        .accessibilityElement(children: .combine)
+        .task { await run() }
+    }
+
+    private func wait(_ ms: UInt64) async { try? await Task.sleep(nanoseconds: ms * 1_000_000) }
+
+    private func run() async {
+        let ease = Animation.timingCurve(0.4, 0, 0.2, 1, duration: 0.4)
+        if reduce {                                    // all at once, then gone
+            box = 1; line = 1; shown = shown.map { _ in true }
+            await wait(5000 + 300 * UInt64(rows.count))
+            box = 0; onDone(); return
+        }
+        withAnimation(.linear(duration: 0.3)) { box = 1 }
+        await wait(300)
+        withAnimation(ease) { line = 1 }
+        await wait(400)
+        for i in rows.indices {
+            await wait(80)
+            withAnimation(.linear(duration: 0.2)) { shown[i] = true }
+            await wait(200)
+        }
+        await wait(5000)
+        for i in rows.indices.reversed() {
+            await wait(60)
+            withAnimation(.linear(duration: 0.15)) { shown[i] = false }
+            await wait(150)
+        }
+        await wait(100)
+        withAnimation(.timingCurve(0.4, 0, 0.2, 1, duration: 0.3)) { line = 0 }
+        await wait(500)
+        withAnimation(.linear(duration: 0.2)) { box = 0 }
+        await wait(200)
+        if !Task.isCancelled { onDone() }
     }
 }
 

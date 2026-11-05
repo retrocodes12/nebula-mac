@@ -11,6 +11,8 @@ struct SettingsView: View {
     @State private var skipIntro = "button"
     /// Night mode is also switched in the player's Audio menu: read where it is drawn, bumped to draw again.
     @State private var nightDrawn = 0
+    /// Redraws the Continue watching and advisory switches (11-05) after a change; their values live in Prefs.
+    @State private var cwDrawn = 0
     @State private var seekrField = ""
     @State private var seekrNote: String?
     @State private var seekrBusy = false
@@ -68,6 +70,30 @@ struct SettingsView: View {
                             HStack(spacing: 6) {
                                 ForEach([("button", "Button"), ("auto", "Auto"), ("off", "Off")], id: \.0) { m in Chip(text: m.1, on: skipIntro == m.0) { skipIntro = m.0 } }
                             }
+                        }
+                        Hairline()
+                        PanelRow(title: "Content advisory", detail: "The age rating and what to expect — violence, language, frightening scenes — for a few seconds as a film or episode starts.") {
+                            let _ = cwDrawn
+                            Toggle("", isOn: Binding(get: { model.prefs.advisory }, set: { model.prefs.advisory = $0; cwDrawn &+= 1 }))
+                                .toggleStyle(.switch).labelsHidden().controlSize(.small)
+                        }
+                        Hairline()
+                        PanelRow(title: "Up next in Continue Watching", detail: "After you finish an episode, the next one waits in the row.") {
+                            let _ = cwDrawn
+                            Toggle("", isOn: Binding(get: { model.prefs.cwNext }, set: { model.prefs.cwNext = $0; cwDrawn &+= 1; model.progressVersion += 1 }))
+                                .toggleStyle(.switch).labelsHidden().controlSize(.small)
+                        }
+                        Hairline()
+                        PanelRow(title: "Show episodes not out yet", detail: "Up next can be an episode that airs soon, with its day on the card.") {
+                            let _ = cwDrawn
+                            Toggle("", isOn: Binding(get: { model.prefs.cwUnaired }, set: { model.prefs.cwUnaired = $0; cwDrawn &+= 1; model.progressVersion += 1 }))
+                                .toggleStyle(.switch).labelsHidden().controlSize(.small)
+                        }
+                        Hairline()
+                        PanelRow(title: "Offer to resume at start", detail: "Closed the app in the middle of something? It asks when you come back.") {
+                            let _ = cwDrawn
+                            Toggle("", isOn: Binding(get: { model.prefs.resumePrompt }, set: { model.prefs.resumePrompt = $0; cwDrawn &+= 1 }))
+                                .toggleStyle(.switch).labelsHidden().controlSize(.small)
                         }
                         Hairline()
                         seekrRow

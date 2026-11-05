@@ -69,6 +69,13 @@ struct PlayerScreen: View {
                 .opacity(chromeShown ? 1 : 0)
                 .allowsHitTesting(chromeShown)               // hidden controls must not take clicks
                 .animation(.easeOut(duration: 0.25), value: chromeShown)
+            // the content advisory, top left, as the title first plays; under the top buttons while the controls are up
+            if let rows = extras.advisoryRows {
+                AdvisoryOverlay(rows: rows, big: true) { extras.advisoryDone() }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .padding(.leading, 32).padding(.top, chromeShown ? 86 : 26)
+                    .animation(.easeOut(duration: 0.25), value: chromeShown)
+            }
 
             if nextOffered, let n = next, mpv.failure == nil { nextPill(n) }
             // outside the chrome: it stays while the controls sleep, as on the TV
@@ -384,6 +391,7 @@ struct PlayerScreen: View {
         keepDisplayAwake(wantsAwake)
         applySubStyle()
         extras.startSkip(type: t.type, id: t.id, mode: model.prefs.skipIntro)
+        extras.startAdvisory(type: t.type, id: t.id, on: model.prefs.advisory)   // the content advisory + age rating
         let s = request.stream
         sourceTask = Task {
             let got = await PlaybackRules.source(for: s, maxHeight: model.prefs.maxHeight, stremio: model.stremio)
@@ -419,6 +427,7 @@ struct PlayerScreen: View {
     private func tick(_ t: Double) {
         // the monthly recap counts live too, and only while the picture moves
         model.noteWatching(request.title, playing: mpv.loaded && !mpv.paused && !mpv.buffering && !mpv.ended && mpv.failure == nil)
+        extras.advisoryTick(playing: mpv.loaded && !mpv.paused && !mpv.buffering && mpv.failure == nil && mpv.timePos > 0.2)
         guard mpv.loaded, !mpv.isLive, mpv.duration > 0 else { return }
         if abs(t - lastSaved) >= 5 { lastSaved = t; save() }
         if let note = extras.tick(t, mode: model.prefs.skipIntro, live: mpv.isLive, mpv: mpv) { show(flash: note) }

@@ -26,6 +26,18 @@ public struct ProgressRec: Equatable, Sendable {
     public var hand = false
     public var at: Int64 = 0
 
+    // ---- an Up next card in Continue watching (ContinueNext.swift) — built for the row, never stored ----
+    public var next = false
+    /// The show an Up next card belongs to.
+    public var seriesId = ""
+    public var seriesPoster: String?
+    /// The episode's own name ("Ep 1.2"); `name` stays the show's.
+    public var epName = ""
+    /// When it airs (ms), 0 when it is out.
+    public var airs: Int64 = 0
+    /// Out after the episode before it was finished: "New episode".
+    public var fresh = false
+
     public init(type: String, id: String) { self.type = type; self.id = id }
 
     public var fraction: Double { dur > 0 ? min(1, max(0, pos / dur)) : 0 }
@@ -46,10 +58,17 @@ public struct ProgressRec: Equatable, Sendable {
         done = r.bool("done"); dismissed = r.bool("dismissed"); hand = r.bool("hand"); at = r.int64("at")
     }
 
-    /// The wire shape: a tombstone carries nothing but what it is.
+    /// The wire shape: a dismissed tombstone carries nothing but what it is; a finished one keeps what it was
+    /// (name, art, add-on — Up next is built from it, as on the web and Android since 11-05).
     var wire: JSONObject {
         var w: JSONObject = ["type": type, "id": id, "at": at]
-        if done { w["done"] = true; if hand { w["hand"] = true } }
+        if done {
+            w["done"] = true; if hand { w["hand"] = true }
+            if !name.isEmpty { w["name"] = name }
+            if let p = poster, !p.isEmpty { w["poster"] = p }
+            if let b = back, !b.isEmpty { w["back"] = b }
+            if !addonUrl.isEmpty { w["addonUrl"] = addonUrl }
+        }
         else if dismissed { w["dismissed"] = true }
         else {
             w["name"] = name; w["poster"] = poster ?? ""; w["shape"] = shape; w["back"] = back ?? ""
@@ -63,6 +82,19 @@ public final class ProgressStore: @unchecked Sendable {
     public static let maxRecords = 400
     public static let minPos: Double = 15          // below this it isn't worth resuming
     public static let endGap: Double = 60          // within this of the end counts as finished
+    // Nuvio's rule beside ours (11-05, as on the web and Android): 90 % in is finished too, so a film's long credits
+    // no longer keep it in Continue watching. Not under 121 s — a debrid add-on's "not ready" clip is not an episode.
+    public static let doneFraction = 0.9
+    public static let realMin: Double = 121
+
+    public static func ended(_ pos: Double, _ dur: Double) -> Bool {
+        dur > 0 && (pos > dur - endGap || (dur >= realMin && pos >= dur * doneFraction))
+    }
+    /// A part-way record worth offering again: started, not finished, not taken off.
+    public static func resumable(_ r: ProgressRec?) -> Bool {
+        guard let r = r, !r.done, !r.dismissed, r.dur > 0, r.pos >= minPos else { return false }
+        return !ended(r.pos, r.dur)
+    }
 
     let store: Store
     private let lock = NSLock()
@@ -148,8 +180,7 @@ public final class ProgressStore: @unchecked Sendable {
 
     /// Where playback of (type, id) should start, in seconds — 0 means the beginning.
     public func resumeAt(_ type: String, _ id: String) -> Double {
-        guard let r = get(type, id), !r.done, !r.dismissed, r.pos > 0, r.dur > 0 else { return 0 }
-        if r.pos < ProgressStore.minPos || r.pos > r.dur - ProgressStore.endGap { return 0 }
+        guard let r = get(type, id), ProgressStore.resumable(r) else { return 0 }
         return r.pos
     }
 
@@ -162,8 +193,9 @@ public final class ProgressStore: @unchecked Sendable {
         rec.pos = ProgressRec.seconds(rec.pos); rec.dur = ProgressRec.seconds(rec.dur)
         let k = ProgressStore.key(rec.type, rec.id)
         mutate { m in
-            if rec.done || (rec.dur > 0 && rec.pos > rec.dur - ProgressStore.endGap) {
+            if rec.done || ProgressStore.ended(rec.pos, rec.dur) {
                 var t = ProgressRec(type: rec.type, id: rec.id); t.done = true; t.at = nowMs()
+                t.name = rec.name; t.poster = rec.poster; t.back = rec.back; t.addonUrl = rec.addonUrl
                 m[k] = t
                 return true
             }
@@ -219,14 +251,24 @@ public final class ProgressStore: @unchecked Sendable {
         return o
     }
 
-    /// The twenty most recent things worth resuming, newest first.
-    public func continueList() -> [ProgressRec] {
-        let off = disabledAddons()
-        return all().values
-            .filter { !$0.done && !$0.dismissed && $0.pos >= ProgressStore.minPos && $0.dur > 0 && $0.pos <= $0.dur - ProgressStore.endGap }
-            .filter { $0.addonUrl.isEmpty || !off.contains($0.addonUrl) }
-            .sorted { $0.at > $1.at }
-            .prefix(20).map { $0 }
+    /// Continue watching (ContinueNext.plan): one card per show — its resume point, or Up next once its newest
+    /// episode is finished — and every film part-way through; newest first, twenty at most. Without [answer] (the
+    /// app's kept Up next answers) it is the resume points alone.
+    public func continueList(nextOn: Bool = true, unaired: Bool = false,
+                             answer: (ContinueNext.Show) -> ContinueNext.Answer? = { _ in nil },
+                             want: (ContinueNext.Show) -> Void = { _ in }) -> [ProgressRec] {
+        ContinueNext.plan(all: all(), off: disabledAddons(), nextOn: nextOn, unaired: unaired, now: nowMs(), answer: answer, want: want)
+    }
+
+    /// Take a show's Up next card off the row: a `nextup:<show>` tombstone (it syncs, as on the web and Android).
+    /// It comes back once another of the show's episodes is finished.
+    public func dismissNext(_ seriesId: String) {
+        if seriesId.isEmpty { return }
+        mutate { m in
+            var t = ProgressRec(type: ContinueNext.nextupType, id: seriesId); t.dismissed = true; t.at = nowMs()
+            m[ProgressStore.key(ContinueNext.nextupType, seriesId)] = t
+            return true
+        }
     }
 }
 
