@@ -81,6 +81,8 @@ struct PlayerScreen: View {
             // outside the chrome: it stays while the controls sleep, as on the TV
             else if let o = extras.skipOffer, model.prefs.skipIntro == "button", mpv.failure == nil { skipPill(o) }
             if let f = flash { flashLabel(f) }
+            // the watch party: its card, pill, chat lines and reactions (PartyViews.swift)
+            PartyOverlay(party: model.party, mpv: mpv, request: request, bottomInset: chromeShown ? 130 : 40)
         }
         .onContinuousHover { phase in if case .active = phase { wake() } }
         .onAppear(perform: start)
@@ -190,6 +192,7 @@ struct PlayerScreen: View {
                     barButton("speedometer", "Speed", .speed)
                     barButton("aspectratio", "Picture size", .fit)
                     barButton("info.circle", "Info", .info)
+                    GlassCircle(icon: "person.2.fill", label: "Watch party", size: 38) { partyButton(); wake() }
                     GlassCircle(icon: "arrow.up.left.and.arrow.down.right", label: "Full screen", size: 38) { toggleFullScreen() }
                 }
             }
@@ -217,6 +220,11 @@ struct PlayerScreen: View {
         if let a = request.streamAddon { parts.append(a.name) }
         if mpv.videoHeight > 0 { parts.append("\(mpv.videoHeight)p") }
         return parts.joined(separator: " · ").uppercased()
+    }
+
+    /// A party on: its card. None: start one with this stream.
+    private func partyButton() {
+        if model.party.active { model.party.openPanel(!model.party.panelOpen) } else { model.party.start(request.partyDesc) }
     }
 
     private func barButton(_ icon: String, _ label: String, _ m: PlayerMenu) -> some View {

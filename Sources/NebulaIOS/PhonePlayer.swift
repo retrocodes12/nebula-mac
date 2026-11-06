@@ -97,6 +97,8 @@ struct PhonePlayer: View {
             if nextOffered, let n = next, mpv.failure == nil, !locked { nextPill(n) }
             else if let o = extras.skipOffer, model.prefs.skipIntro == "button", mpv.failure == nil, !locked { skipPill(o) }
             if let f = mpv.failure { failureCard(f) }
+            // the watch party: its card, pill, chat lines and reactions (PartyViews.swift)
+            if !locked { PartyOverlay(party: model.party, mpv: mpv, request: request, bottomInset: chromeShown ? 110 : 30) }
         }
         .background(keyboardKeys)
         .statusBarHidden(true)
@@ -355,6 +357,10 @@ struct PhonePlayer: View {
                     barButton("speedometer", "Speed", .speed)
                     barButton("aspectratio", "Picture size", .fit)
                     barButton("info.circle", "Info", .info)
+                    GlassCircle(icon: "person.2.fill", label: "Watch party", size: 40) {
+                        if model.party.active { model.party.openPanel(!model.party.panelOpen) } else { model.party.start(request.partyDesc) }
+                        wake()
+                    }
                 }
             }
             .padding(.horizontal, 12).padding(.bottom, 8)

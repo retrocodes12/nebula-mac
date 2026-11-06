@@ -115,9 +115,16 @@ final class AppModel: ObservableObject {
     /// My List shows Downloads (a title page's Download button sends the viewer there while one is under way).
     @Published var libraryShowsDownloads = false
     @Published var path: [Route] = []
+    /// The watch party (PartyClient.swift); made on first use.
+    lazy var party: PartyClient = makeParty()
     @Published var player: PlayRequest? {
         // the pages under a closed player catch up on what it wrote while it was up
         didSet {
+            // a viewer who closes the player leaves the party (the host keeps it alive) — not when the party itself
+            // moved this device to another stream or to a streams page
+            if player == nil, oldValue != nil, party.active, !party.isHost {
+                if party.keepOnClose { party.keepOnClose = false } else { party.leave() }
+            }
             if player == nil && progressPending { progressPending = false; progressVersion += 1 }
             // what is playing, kept for the next start (AppModelNext.swift): left the normal way, nothing to offer
             if player?.id != oldValue?.id { markLastPlay(player?.target) }
