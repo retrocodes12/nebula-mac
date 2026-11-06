@@ -78,10 +78,12 @@ final class PartyClient: ObservableObject {
     private var binds = Set<AnyCancellable>()
     private var lastT: Double = 0
     private var lastTAt = Date()
+    /// when this stream first played: nothing is the viewer's before that (its own start, a resume point)
+    private var playedAt: Date?
 
     // MARK: device settings (Settings › Watch party)
 
-    static var name: String {
+    nonisolated static var name: String {
         if let n = UserDefaults.standard.string(forKey: "party_name"), !n.trimmingCharacters(in: .whitespaces).isEmpty { return String(n.prefix(40)) }
         #if os(macOS)
         return Host.current().localizedName.map { String($0.prefix(40)) } ?? "Mac"
@@ -89,9 +91,9 @@ final class PartyClient: ObservableObject {
         return "iPhone"
         #endif
     }
-    static var share: Bool { UserDefaults.standard.object(forKey: "party_share") as? Bool ?? true }
-    static var useOwn: Bool { UserDefaults.standard.object(forKey: "party_own") as? Bool ?? false }
-    static var device: String {
+    nonisolated static var share: Bool { UserDefaults.standard.object(forKey: "party_share") as? Bool ?? true }
+    nonisolated static var useOwn: Bool { UserDefaults.standard.object(forKey: "party_own") as? Bool ?? false }
+    nonisolated static var device: String {
         if let d = UserDefaults.standard.string(forKey: "party_dev"), d.count >= 8 { return d }
         let d = "i" + UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(20)
         UserDefaults.standard.set(d, forKey: "party_dev")
@@ -372,6 +374,7 @@ final class PartyClient: ObservableObject {
     func bind(_ player: MPVController, desc: PartyStreamDesc) {
         mpv = player; playDesc = desc; playKey = desc.key
         quietUntil = Date().addingTimeInterval(2)
+        playedAt = nil
         if choosing && playKey == key { choosing = false }
         binds.removeAll()
         player.$paused.dropFirst().removeDuplicates().sink { [weak self] p in self?.user(p ? "pause" : "play") }.store(in: &binds)
@@ -417,7 +420,7 @@ final class PartyClient: ObservableObject {
     private func user(_ kind: String) {
         guard active, let p = mpv else { return }
         if let t = selfMarks[kind], Date().timeIntervalSince(t) < 1.5 { selfMarks[kind] = nil; return }
-        guard Date() >= quietUntil, onKey else { return }
+        guard Date() >= quietUntil, onKey, let pa = playedAt, Date().timeIntervalSince(pa) > 0.8 else { return }
         if kind == "pause" && (p.ended || p.failure != nil) { return }
         let s = ps
         if mayControl {
@@ -451,6 +454,7 @@ final class PartyClient: ObservableObject {
     private func tick() {
         guard active, let p = mpv else { return }
         let now = Date()
+        if playedAt == nil && p.loaded && !p.paused && !p.buffering { playedAt = now }
         // a jump the engine made (the timeline moved further than the clock): the viewer's seek, unless it was ours
         let expected = lastT + (p.paused ? 0 : now.timeIntervalSince(lastTAt) * p.speed)
         if p.loaded && abs(p.timePos - expected) > 2 { user("seek") }
