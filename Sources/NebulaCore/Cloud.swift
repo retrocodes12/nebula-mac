@@ -38,7 +38,7 @@ public struct Profile: Equatable, Sendable {
         switch planStatus {
         case "trialing": return "Free week"
         case "active": return "Active"
-        case "past_due": return "Payment failed — update your card"
+        case "past_due": return "Payment failed. Update your card"
         case "paused": return "Paused"
         default: return ""
         }
@@ -663,7 +663,7 @@ public actor Cloud {
 
     public static func errorText(_ e: Error) -> String {
         guard let f = e as? HTTPFailure else { return "Could not reach the server." }
-        if f.code == 429 { return "Too many tries — give it a minute." }
+        if f.code == 429 { return "Too many tries. Give it a minute." }
         switch f.error {
         case "handle taken": return "That handle is taken."
         case "bad handle": return "Handles are 3–20 letters, numbers or underscores."
@@ -671,7 +671,7 @@ public actor Cloud {
         case "wrong handle or password": return "Wrong handle or password."
         case "wrong handle or key": return "That handle and recovery key don’t match."
         case "wrong password": return "Wrong password."
-        case "code not found or expired": return "That code was not found — it may have expired."
+        case "code not found or expired": return "That code was not found. It may have expired."
         case "unauthorized": return "This device was signed out. Sign in again."
         default: return "Something went wrong (\(f.code))."
         }
@@ -758,7 +758,7 @@ public actor Cloud {
         } catch let f as HTTPFailure where f.code == 403 {
             return "Wrong password."
         } catch let f as HTTPFailure where f.code == 429 {
-            return "Too many tries — wait a minute."
+            return "Too many tries. Wait a minute."
         } catch { return "Could not reach Nebula. Try again." }
     }
 
@@ -791,7 +791,7 @@ public actor Cloud {
 
     /// Redeem a supporter code on this profile. nil on success, else a sentence.
     public func redeem(_ raw: String) async -> String? {
-        guard linked else { return "Sign in first — the supporter mark lives on your profile." }
+        guard linked else { return "Sign in first. The supporter mark lives on your profile." }
         let code = Cloud.supportCode(raw)
         if code.isEmpty { return "A code looks like NEB-XXXX-XXXX." }
         do {
@@ -813,7 +813,7 @@ public actor Cloud {
 
     /// Cast or change this profile's ballot: the new state, or a sentence.
     public func castVote(_ option: String) async -> (SupportVote?, String?) {
-        guard linked else { return (nil, "Sign in first — your vote lives on your profile.") }
+        guard linked else { return (nil, "Sign in first. Your vote lives on your profile.") }
         do {
             return (SupportVote.parse(try await api("POST", "/v1/support/vote", ["option": option])), nil)
         } catch { return (nil, SupportVote.errorText(error)) }

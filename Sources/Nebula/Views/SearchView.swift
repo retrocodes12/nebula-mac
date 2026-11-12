@@ -170,7 +170,7 @@ struct DiscoverSection: View {
                         if let first = options.first(where: { $0.catalog.type == t }) { pick(first, genre: nil) }
                     }
                     PickMenu(label: "Catalog", value: cur.catalog.name,
-                             options: options.filter { $0.catalog.type == cur.catalog.type }.map { (key($0), "\($0.catalog.name) — \($0.addon.name)") }, current: key(cur)) { k in
+                             options: options.filter { $0.catalog.type == cur.catalog.type }.map { (key($0), "\($0.catalog.name) · \($0.addon.name)") }, current: key(cur)) { k in
                         if let t = options.first(where: { key($0) == k }) { pick(t, genre: nil) }
                     }
                     if !cur.catalog.genres.isEmpty {

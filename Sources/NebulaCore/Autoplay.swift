@@ -192,8 +192,8 @@ public enum Autoplay {
                 if h.hasPrefix("www.") { h.removeFirst(4) }
                 label += " · " + h
             }
-            if r.stream.url != cur && failed.contains(r.stream.url) { label += " — did not play" }
-            else if debrid(r.stream) == .wait { label += " — not ready yet" }
+            if r.stream.url != cur && failed.contains(r.stream.url) { label += " · did not play" }
+            else if debrid(r.stream) == .wait { label += " · not ready yet" }
             return (label, r.stream.url)
         }
     }

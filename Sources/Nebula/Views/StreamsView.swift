@@ -49,7 +49,7 @@ struct StreamsView: View {
                     // picking a source to download (Downloads.swift): only rows that can be kept are listed
                     if target.save {
                         Text(target.seasonRest.isEmpty ? "Choose a source to download"
-                             : "Choose a source for Season \(target.episode?.season ?? 0) — the other episodes get the same one")
+                             : "Choose a source for Season \(target.episode?.season ?? 0). The other episodes get the same one")
                             .scaledFont(size: 14, weight: .semibold).foregroundStyle(Theme.ink)
                     }
                     if sections.count > 1 {
@@ -168,7 +168,7 @@ struct StreamsView: View {
             if let w = why { model.say(w, error: true); return }
             if model.path.last == here { model.path.removeLast() }
             if t.seasonRest.isEmpty { model.say("Downloading · My List › Downloads"); return }
-            model.say("Downloading — finding the same source for the rest of the season…")
+            model.say("Downloading: finding the same source for the rest of the season…")
             await model.queueSeason(t.seasonRest, picked: st, addon: addon, target: t)
         }
     }
@@ -235,7 +235,7 @@ struct StreamsView: View {
             ProgressView().controlSize(.small)
             VStack(alignment: .leading, spacing: 2) {
                 Text(a.name).scaledFont(size: 14, weight: .semibold).foregroundStyle(Theme.ink)
-                Text(slow ? "Still looking — some add-ons take up to a minute" : "Looking for streams…").scaledFont(size: 12).foregroundStyle(Theme.label2)
+                Text(slow ? "Still looking. Some add-ons take up to a minute" : "Looking for streams…").scaledFont(size: 12).foregroundStyle(Theme.label2)
             }
             Spacer()
         }
@@ -247,7 +247,7 @@ struct StreamsView: View {
     private var waitLine: some View {
         HStack(spacing: 8) {
             ProgressView().controlSize(.mini)
-            Text("Still asking " + SupportPanel.join(asking.map(\.name)) + (slow ? " — some add-ons take up to a minute" : "…"))
+            Text("Still asking " + SupportPanel.join(asking.map(\.name)) + (slow ? " · some add-ons take up to a minute" : "…"))
                 .scaledFont(size: 13).foregroundStyle(Theme.label2).lineLimit(2)
         }
     }

@@ -183,7 +183,7 @@ struct SupportPanel: View {
                 }
                 Text(SupportPanel.voteFoot(v, r)).scaledFont(size: 12.5).foregroundStyle(Theme.label2).fixedSize(horizontal: false, vertical: true)
             } else {
-                Text("No vote open right now — the next one shows up here.").scaledFont(size: 13).foregroundStyle(Theme.label2)
+                Text("No vote open right now. The next one shows up here.").scaledFont(size: 13).foregroundStyle(Theme.label2)
                 if let w = v.last?.winner {
                     Text("Last time, supporters chose \(w).").scaledFont(size: 13).foregroundStyle(Theme.ink).fixedSize(horizontal: false, vertical: true)
                 }
@@ -240,7 +240,7 @@ struct SupportPanel: View {
         Task {
             let (next, err) = await model.cloud.castVote(id)
             voteBusy = false
-            if let n = next { vote = n; model.say("Your vote is in — you can change it until the vote closes.") }
+            if let n = next { vote = n; model.say("Your vote is in. You can change it until the vote closes.") }
             if let e = err { voteLine = e; vote = await model.cloud.loadVote() ?? vote }
         }
     }
@@ -273,7 +273,7 @@ struct SupportPanel: View {
                 HStack(spacing: 6) { ForEach(months, id: \.self) { m in Chip(text: WatchLog.monthShort(m), on: m == pick) { recapMonth = m } } }
             }
             if r.empty {
-                Text(pick == now ? "Nothing watched yet this month — it fills in as you watch." : "Nothing watched in \(WatchLog.monthName(pick)).")
+                Text(pick == now ? "Nothing watched yet this month. It fills in as you watch." : "Nothing watched in \(WatchLog.monthName(pick)).")
                     .scaledFont(size: 13).foregroundStyle(Theme.label2)
             } else {
                 let h = WatchLog.hoursStat(r.total)
@@ -296,7 +296,7 @@ struct SupportPanel: View {
                     }
                 }
             }
-            Text("Worked out on this \(Platform.deviceWord) from what it played — never sent anywhere.")
+            Text("Worked out on this \(Platform.deviceWord) from what it played. Never sent anywhere.")
                 .scaledFont(size: 12).foregroundStyle(Theme.label3).fixedSize(horizontal: false, vertical: true)
         }
         .padding(16)
@@ -332,7 +332,7 @@ struct SupportPanel: View {
         Task {
             let e = await model.cloud.redeem(code)
             busy = false
-            if let e = e { note = e } else { note = "Thank you — the mark is on your profile."; code = ""; await model.loadSupport() }
+            if let e = e { note = e } else { note = "Thank you. The mark is on your profile."; code = ""; await model.loadSupport() }
         }
     }
 

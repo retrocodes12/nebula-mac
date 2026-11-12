@@ -72,7 +72,7 @@ struct SettingsView: View {
                             }
                         }
                         Hairline()
-                        PanelRow(title: "Content advisory", detail: "The age rating and what to expect — violence, language, frightening scenes — for a few seconds as a film or episode starts.") {
+                        PanelRow(title: "Content advisory", detail: "The age rating and what to expect (violence, language, frightening scenes) for a few seconds as a film or episode starts.") {
                             let _ = cwDrawn
                             Toggle("", isOn: Binding(get: { model.prefs.advisory }, set: { model.prefs.advisory = $0; cwDrawn &+= 1 }))
                                 .toggleStyle(.switch).labelsHidden().controlSize(.small)
@@ -246,7 +246,7 @@ struct SettingsView: View {
     private func connectSeekr() {
         let k = seekrField.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !seekrBusy else { return }
-        guard Seekr.validKey(k) else { seekrNote = "That is not a Seekr key — they start sk_live_."; return }
+        guard Seekr.validKey(k) else { seekrNote = "That is not a Seekr key. They start sk_live_."; return }
         seekrBusy = true
         Task {
             let r = await Seekr.validate(k)
@@ -254,7 +254,7 @@ struct SettingsView: View {
             switch r {
             case .ok: model.setSeekrKey(k); seekrField = ""; seekrNote = nil; model.say("Seekr connected.")
             case .refused: seekrNote = "Seekr did not accept that key."
-            case .unreachable: seekrNote = "Could not reach Seekr — try again in a moment."
+            case .unreachable: seekrNote = "Could not reach Seekr. Try again in a moment."
             }
         }
     }
@@ -298,7 +298,7 @@ struct ProfilePanel: View {
                     Chip(text: "Create a profile", on: mode == .create) { mode = .create; error = nil }
                 }
                 Text(mode == .signIn ? "Your add-ons, your place in everything and My List come with you."
-                                     : "A handle and a password — no email. What is on this \(Platform.deviceWord) becomes the profile.")
+                                     : "A handle and a password, no email. What is on this \(Platform.deviceWord) becomes the profile.")
                     .scaledFont(size: 12.5).foregroundStyle(Theme.label2)
                 field("@handle", text: $handle).entry(.handle)
                 if mode == .create { field("Name", text: $name) }

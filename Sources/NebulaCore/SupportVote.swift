@@ -117,8 +117,8 @@ public struct SupportVote: Equatable, Sendable {
         case "vote needs plus": return "The vote is for Supporter Plus, Founders and Monthly supporters."
         case "no vote open": return "That vote has just closed."
         case "unknown option": return "That choice is no longer on the ballot."
-        case "no profile": return "Sign in first — your vote lives on your profile."
-        default: return f.code == 401 ? "Sign in first — your vote lives on your profile." : Cloud.errorText(e)
+        case "no profile": return "Sign in first. Your vote lives on your profile."
+        default: return f.code == 401 ? "Sign in first. Your vote lives on your profile." : Cloud.errorText(e)
         }
     }
 }

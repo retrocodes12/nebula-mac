@@ -144,7 +144,7 @@ final class PerksTests: XCTestCase {
                         transport: server, base: "https://c.test/cloud")
         let before = await server.requests.count
         let (_, signIn) = await out.castVote("o1")
-        XCTAssertEqual(signIn, "Sign in first — your vote lives on your profile.")
+        XCTAssertEqual(signIn, "Sign in first. Your vote lives on your profile.")
         let after = await server.requests.count
         XCTAssertEqual(before, after)
     }

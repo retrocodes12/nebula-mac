@@ -76,7 +76,7 @@ public enum StreamCards {
         Design(id: "compact", name: "Compact", sub: "Marks and sources, no file name", spec: Spec(dense: true).with(["service", "file"])),
         Design(id: "line", name: "One line", sub: "Quality, title, size and the add-on",
                spec: Spec(layout: .row, dense: true).with(["seeds", "marks", "langs", "service", "file"])),
-        Design(id: "minimal", name: "Minimal", sub: "Quality, title and size — nothing else",
+        Design(id: "minimal", name: "Minimal", sub: "Quality, title and size, nothing else",
                spec: Spec(layout: .row, dense: true).with(["tags", "seeds", "marks", "langs", "addon", "service", "play", "file"])),
         Design(id: "classic", name: "Classic", sub: "The quality plate in front", spec: nil),
         Design(id: "custom", name: "Custom", sub: "Yours: pick the layout and every part", spec: nil),

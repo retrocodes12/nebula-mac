@@ -379,7 +379,7 @@ final class AppModel: ObservableObject {
         }
         downloads.seasonBusy = nil
         say(missing.isEmpty ? "Season \(season): all \(queued) episodes downloading · My List › Downloads"
-            : "\(queued) of \(total) downloading · no matching source for \(missing.count) (\(missing.prefix(2).joined(separator: ", "))\(missing.count > 2 ? "…" : "")) — download those from their own menu")
+            : "\(queued) of \(total) downloading · no matching source for \(missing.count) (\(missing.prefix(2).joined(separator: ", "))\(missing.count > 2 ? "…" : "")). Download those from their own menu")
     }
 
     func select(_ t: Tab) {
@@ -593,7 +593,7 @@ final class AppModel: ObservableObject {
         Task { await cloud.noteChanged("viewers") }
         refreshViewers()
         switchViewer("b")
-        say("Added Profile 2 — it starts with an empty history.")
+        say("Added Profile 2. It starts with an empty history.")
     }
     /// The picker's Add Profile: the second profile, not switched to (it is picked from the picker like the first).
     func addViewerQuietly() {

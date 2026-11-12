@@ -243,7 +243,7 @@ final class PartyClient: ObservableObject {
             hostOnly = m["hostOnly"] as? Bool ?? false
             members = [PartyMember(id: id, name: Self.name, host: true, s: "ready", k: key)]
             resumedAt = Date(); panelOpen = true
-            say?("Party \(code ?? "") started — friends join with the code.")
+            say?("Party \(code ?? "") started. Friends join with the code.")
             publish(heartbeat: false, waiting: false)
         case "joined":
             code = m["code"] as? String; isHost = m["host"] as? Bool ?? false; id = m["id"] as? String ?? ""
@@ -345,8 +345,8 @@ final class PartyClient: ObservableObject {
             let found = await onFindOwn?(d) ?? false
             guard stream == d else { return }
             if found { choosing = false; return }
-            if !d.url.isEmpty { choosing = false; say?("None of your add-ons has this file — playing the host's link."); onPlay?(d) }
-            else { onChoose?(d); say?("Pick a source — the party is watching \(d.file ?? d.name ?? d.title).") }
+            if !d.url.isEmpty { choosing = false; say?("None of your add-ons has this file. Playing the host's link."); onPlay?(d) }
+            else { onChoose?(d); say?("Pick a source. The party is watching \(d.file ?? d.name ?? d.title).") }
         }
     }
 

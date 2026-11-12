@@ -126,7 +126,7 @@ struct WhoPin: View {
             .opacity(password.isEmpty || busy ? 0.5 : 1)
             .padding(.top, 14)
         } else {
-            Text("Sign in to your Nebula account on this device first — its password resets the PIN.")
+            Text("Sign in to your Nebula account on this device first. Its password resets the PIN.")
                 .scaledFont(size: 15).foregroundStyle(Theme.label2)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 360)
@@ -202,12 +202,12 @@ struct WhoPin: View {
             if first.isEmpty { first = pin; message = ""; return }
             if pin == first { model.setPin(ask.id, pin: pin); onPassed(); return }
             first = ""
-            message = "The PINs didn't match — try again."
+            message = "The PINs didn't match. Try again."
         }
     }
 
     private func holdMessage() {
-        message = "Too many tries — wait 30 seconds."
+        message = "Too many tries. Wait 30 seconds."
         holdTask?.cancel()
         let until = model.pinHoldUntil
         holdTask = Task { @MainActor in

@@ -28,7 +28,7 @@ extension AppModel {
         unlocked.insert(id)
         pinWrong = 0
         refreshViewers()
-        say(forgot ? "PIN removed — add a new one from Manage Profiles." : "PIN removed.")
+        say(forgot ? "PIN removed. Add a new one from Manage Profiles." : "PIN removed.")
     }
     /// Forgot PIN? needs this device signed in to an account with a password (a profile).
     var canResetPin: Bool { profile != nil }

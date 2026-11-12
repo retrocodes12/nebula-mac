@@ -234,7 +234,7 @@ struct PartySettings: View {
                     .onChange(of: share) { v in UserDefaults.standard.set(v, forKey: "party_share") }
             }
             Hairline()
-            PanelRow(title: "Use my own add-ons", detail: "When you join, look for the host's file in your add-ons first — the host's link if none has it.") {
+            PanelRow(title: "Use my own add-ons", detail: "When you join, look for the host's file in your add-ons first, the host's link if none has it.") {
                 Toggle("", isOn: $own).toggleStyle(.switch).labelsHidden().controlSize(.small)
                     .onChange(of: own) { v in UserDefaults.standard.set(v, forKey: "party_own") }
             }

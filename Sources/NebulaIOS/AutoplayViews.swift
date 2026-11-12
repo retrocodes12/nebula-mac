@@ -124,7 +124,7 @@ struct AutoplaySettings: View {
         let _ = drawn
         let p = model.prefs
         Panel {
-            PanelRow(title: "Autoplay the best stream", detail: "Play on a film or episode starts its best stream — no list") {
+            PanelRow(title: "Autoplay the best stream", detail: "Play on a film or episode starts its best stream, no list") {
                 Toggle("", isOn: bind(p.bestPlay) { p.bestPlay = $0 }).toggleStyle(.switch).labelsHidden().controlSize(.small)
             }
             if p.bestPlay {

@@ -68,7 +68,7 @@ final class PinTests: XCTestCase {
         let wrong = await cloud.checkPassword("nope")
         XCTAssertEqual(wrong, "Wrong password.")
         let busy = await cloud.checkPassword("too fast")
-        XCTAssertEqual(busy, "Too many tries — wait a minute.")
+        XCTAssertEqual(busy, "Too many tries. Wait a minute.")
         XCTAssertTrue(server.log.contains("POST /v1/profile/check"))
         server.tokens.removeAll()
         let gone = await cloud.checkPassword("correct horse")

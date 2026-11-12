@@ -443,7 +443,7 @@ struct PlayerScreen: View {
         if model.prefs.autoplayNext, next != nil { nextOffered = mpv.duration - t <= 40 || extras.inCredits(t) }
         let target = request.target
         extras.startSeekr(type: target.type, id: target.id, duration: mpv.duration, key: model.prefs.seekrKey) { [model] in
-            model.say("Seekr turned your key down — add it again in Settings › Playback.", error: true)
+            model.say("Seekr turned your key down. Add it again in Settings › Playback.", error: true)
         }
     }
 

@@ -130,8 +130,8 @@ final class AutoplayTests: XCTestCase {
                     row("[TB⬇️] Comet 4K", title: "💾 4.2 GB", url: "https://c.example/3", a: comet),
                     row("[TB⚡] Comet 4K", url: "https://c.example/4", a: comet)]
         let m = Autoplay.menu(cur: "https://c.example/4", cfg: Autoplay.Cfg(), rows: rows, failed: ["https://a.example/1"])
-        XCTAssertEqual(m.map(\.label), ["4K · Comet | TB · Instant", "1080p · Plain · a.example — did not play",
-                                        "1080p · Plain · b.example", "4K · Comet | TB · 4.2 GB — not ready yet"])
+        XCTAssertEqual(m.map(\.label), ["4K · Comet | TB · Instant", "1080p · Plain · a.example · did not play",
+                                        "1080p · Plain · b.example", "4K · Comet | TB · 4.2 GB · not ready yet"])
         XCTAssertEqual(m.first?.url, "https://c.example/4")
     }
 
