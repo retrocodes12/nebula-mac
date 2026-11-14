@@ -125,6 +125,7 @@ struct RootView: View {
         case .detail(let item, let addonUrl): DetailView(item: item, addonUrl: addonUrl)
         case .streams(let t): StreamsView(target: t)
         case .catalog(let t): CatalogView(target: t)
+        case .person(let t): PersonView(target: t)
         }
     }
 }

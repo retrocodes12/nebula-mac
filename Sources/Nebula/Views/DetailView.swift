@@ -231,20 +231,50 @@ struct DetailView: View {
 
     // MARK: credits
 
+    /// Cast, Director, Writer: every name is pressed (a link in the line, so the names wrap as words do) and opens
+    /// that person's films and series, found through this title (People.swift). Country stays plain.
     @ViewBuilder
     private func credits(_ m: FullMeta) -> some View {
-        let rows: [(String, String)] = [("Cast", m.cast.joined(separator: ", ")), ("Director", m.director.joined(separator: ", ")),
-                                        ("Writer", m.writer.joined(separator: ", ")), ("Country", m.country ?? "")].filter { !$0.1.isEmpty }
-        if !rows.isEmpty {
+        let rows: [(String, [String])] = [("Cast", m.cast), ("Director", m.director), ("Writer", m.writer)].filter { !$0.1.isEmpty }
+        let country = m.country ?? ""
+        if !rows.isEmpty || !country.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(rows, id: \.0) { r in
                     HStack(alignment: .firstTextBaseline, spacing: 14) {
                         Text(r.0.uppercased()).scaledFont(size: 10.5, weight: .medium, design: .monospaced).tracking(1).foregroundStyle(Theme.label3).frame(width: labelColumn, alignment: .leading)
-                        Text(r.1).scaledFont(size: 13.5).foregroundStyle(Theme.ink.opacity(0.85))
+                        Text(names(r.1)).scaledFont(size: 13.5).foregroundStyle(Theme.ink.opacity(0.85)).tint(Theme.ink)
+                    }
+                }
+                if !country.isEmpty {
+                    HStack(alignment: .firstTextBaseline, spacing: 14) {
+                        Text("COUNTRY").scaledFont(size: 10.5, weight: .medium, design: .monospaced).tracking(1).foregroundStyle(Theme.label3).frame(width: labelColumn, alignment: .leading)
+                        Text(country).scaledFont(size: 13.5).foregroundStyle(Theme.ink.opacity(0.85))
                     }
                 }
             }
+            .environment(\.openURL, OpenURLAction { url in
+                guard url.scheme == DetailView.personScheme, let name = DetailView.personName(url) else { return .systemAction }
+                model.push(.person(PersonTarget(name: name, tt: Universe.idOf(item.id), addonUrl: metaAddon?.manifestUrl ?? addonUrl)))
+                return .handled
+            })
         }
+    }
+
+    /// The names as one line of links, joined by commas; each link carries its name.
+    private func names(_ list: [String]) -> AttributedString {
+        var out = AttributedString()
+        for (i, n) in list.enumerated() {
+            if i > 0 { out += AttributedString(", ") }
+            var a = AttributedString(n)
+            var c = URLComponents(); c.scheme = DetailView.personScheme; c.host = "person"; c.queryItems = [URLQueryItem(name: "n", value: n)]
+            a.link = c.url
+            out += a
+        }
+        return out
+    }
+    static let personScheme = "nebula-person"
+    static func personName(_ url: URL) -> String? {
+        URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "n" }?.value.flatMap { $0.isEmpty ? nil : $0 }
     }
 
     // MARK: episodes

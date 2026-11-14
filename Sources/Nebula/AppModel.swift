@@ -37,6 +37,8 @@ enum Route: Hashable {
     case detail(MetaItem, addonUrl: String)
     case streams(StreamsTarget)
     case catalog(CatalogTarget)
+    /// A cast member's, director's or writer's films and series (PersonView.swift).
+    case person(PersonTarget)
 }
 
 struct CatalogRow: Identifiable, Equatable {
