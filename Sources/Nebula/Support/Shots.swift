@@ -40,6 +40,11 @@ enum Shots {
                 await snap(window, dir, "04-streams")
                 m.path.removeAll()
             }
+            // a person's films and series (PersonView): a known cast member of a known film, from the live cloud
+            m.push(.person(PersonTarget(name: "Tim Robbins", tt: "tt0111161", addonUrl: m.homeRows.first?.addon.manifestUrl ?? "")))
+            await settle(atLeast: 8) { true }
+            await snap(window, dir, "04b-person")
+            m.path.removeAll()
             // a row of live events, when the rig added an add-on that has them
             if let live = m.homeRows.first(where: { $0.catalog.type != "movie" && $0.catalog.type != "series" }), let ev = live.items.first {
                 m.push(.streams(StreamsTarget(type: ev.type, id: ev.id, item: ev, addonUrl: live.addon.manifestUrl)))
