@@ -1,5 +1,7 @@
 Nebula for Mac and iPhone: native Swift apps (SwiftUI, libmpv engine). macOS 13 or later on Apple silicon and Intel; iOS 16 or later, iPad included.
 
+**New in 0.12.0:** when an add-on answers with a link instead of a stream, the Streams page shows it. A locked Nebula Sports channel lists its unlock and donation cards; a press opens the page in your browser, and the streams are asked for again when you come back to Nebula.
+
 **New in 0.11.0:** press a cast member, a director or a writer on a title page to see their films and series, best known first, with Films, Series, Directed and Written filters. Any card opens that title, and Back comes back to the person.
 
 **New in 0.10.1:** small fixes.
