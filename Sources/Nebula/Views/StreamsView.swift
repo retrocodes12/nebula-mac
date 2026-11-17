@@ -15,6 +15,9 @@ struct StreamsView: View {
     /// Twelve seconds have gone with someone still asking: say that some take up to a minute.
     @State private var slow = false
     @State private var fresh = false
+    /// A link row sent the viewer to a page (an unlock there changes the add-on's answer): ask again once they are back.
+    @State private var linkOut = false
+    @Environment(\.scenePhase) private var phase
     /// Bumped each time the page shows, so the stream card design is read again.
     @State private var cardsRead = 0
     /// How far the art runs up under a phone's status bar (0 on a Mac).
@@ -36,6 +39,8 @@ struct StreamsView: View {
 
     private var resumeAt: Double { model.progress.resumeAt(target.type, target.id) }
     private var total: Int { sections.reduce(0) { $0 + $1.streams.count } }
+    /// Sections with rows that play: the add-on chips and the counts are about these.
+    private var playable: [StreamSection] { sections.filter { !$0.streams.isEmpty } }
 
     var body: some View {
         ScrollView {
@@ -52,10 +57,14 @@ struct StreamsView: View {
                              : "Choose a source for Season \(target.episode?.season ?? 0). The other episodes get the same one")
                             .scaledFont(size: 14, weight: .semibold).foregroundStyle(Theme.ink)
                     }
-                    if sections.count > 1 {
+                    // nothing plays, but an add-on left a link (a locked channel): the links are the page
+                    if !loading && total == 0 && !target.save && sections.contains(where: { !$0.links.isEmpty }) {
+                        Text("Nothing plays here yet. See below.").scaledFont(size: 14).foregroundStyle(Theme.label2)
+                    }
+                    if playable.count > 1 {
                         EdgeScroller {
                             Chip(text: "All · \(total)", on: filter == nil) { filter = nil }
-                            ForEach(sections) { s in Chip(text: "\(s.addon.name) · \(s.streams.count)", on: filter == s.id) { filter = s.id } }
+                            ForEach(playable) { s in Chip(text: "\(s.addon.name) · \(s.streams.count)", on: filter == s.id) { filter = s.id } }
                         }
                     }
                     // the design the rows are drawn in (Settings › Streams › Stream cards; nil = Classic), read again
@@ -70,7 +79,7 @@ struct StreamsView: View {
                             if !(card?.addon ?? false) {
                                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                                     Text(s.addon.name).scaledFont(size: 16, weight: .semibold).foregroundStyle(Theme.ink)
-                                    Text("\(s.streams.count)").scaledFont(size: 12, design: .monospaced).foregroundStyle(Theme.label3)
+                                    if !s.streams.isEmpty { Text("\(s.streams.count)").scaledFont(size: 12, design: .monospaced).foregroundStyle(Theme.label3) }
                                 }
                             }
                             // lazy: an add-on can answer with a hundred rows, and only the ones on
@@ -88,6 +97,12 @@ struct StreamsView: View {
                                         StreamRow(stream: st, text: text, plateSlot: plates, busy: waiting == key) { play(st, from: s.addon, key: key) }
                                             .equatable()
                                     }
+                                }
+                            }
+                            // its links, under the rows that play (never while picking a source to download)
+                            if !target.save && !s.links.isEmpty {
+                                VStack(spacing: 10) {
+                                    ForEach(Array(s.links.enumerated()), id: \.offset) { _, l in StreamLinkRow(link: l) { openLink(l) } }
                                 }
                             }
                         }
@@ -119,6 +134,9 @@ struct StreamsView: View {
         .bleedsUnderStatusBar()
         .overlay(alignment: .topLeading) { BackButton().padding(.leading, 22).padding(.top, Theme.backTop) }
         .onAppear { cardsRead &+= 1 }
+        .onChange(of: phase) { p in
+            if p == .active && linkOut { linkOut = false; Task { await load() } }
+        }
         .onDisappear {
             // Back while a tap waited for the series: that tap is void
             waitTask?.cancel(); waitTask = nil; waiting = nil
@@ -156,6 +174,13 @@ struct StreamsView: View {
             c.rows = keep.compactMap { $0 < s.rows.count ? s.rows[$0] : nil }
             return c.streams.isEmpty ? nil : c
         }
+    }
+
+    /// A link row: the page in the browser; the add-ons are asked again when the app is in front once more.
+    private func openLink(_ l: StreamLink) {
+        guard let u = URL(string: l.url) else { return }
+        linkOut = true
+        Platform.open(u)
     }
 
     /// The row picked while the page picks a source to download.
@@ -351,6 +376,40 @@ struct StreamRow: View, Equatable {
             Button("Copy the stream’s address") {
                 Platform.copy(stream.url)
             }
+        }
+    }
+}
+
+/// A row that only opens a web page (the add-on's `externalUrl`): its own name and text, an arrow out where a plate would be.
+struct StreamLinkRow: View {
+    let link: StreamLink
+    let action: () -> Void
+    @State private var hover = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 14) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(link.name.isEmpty ? "Open the page" : link.name).scaledFont(size: 14, weight: .semibold).foregroundStyle(Theme.ink).lineLimit(2)
+                    if !link.title.isEmpty {
+                        Text(link.title).scaledFont(size: 12).foregroundStyle(Theme.label2).lineLimit(6).fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                Spacer(minLength: 12)
+                Image(systemName: "arrow.up.right.square").scaledFont(size: 15).foregroundStyle(hover ? Theme.ink : Theme.label3)
+            }
+            .padding(.horizontal, 14).padding(.vertical, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 12).fill(hover ? Theme.surface2 : Theme.surface))
+            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(hover ? Color.white.opacity(0.5) : Theme.line))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hover = $0 }
+        .accessibilityHint("Opens a web page")
+        .contextMenu {
+            Button("Open") { action() }
+            Button("Copy the address") { Platform.copy(link.url) }
         }
     }
 }

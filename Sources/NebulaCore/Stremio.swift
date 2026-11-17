@@ -232,6 +232,24 @@ public struct Stremio: Sendable {
 
     /// The streams page's request: one that failed for a reason that may pass (`worthAskingAgain`) is asked once more
     /// after `pause` (2 s) before the add-on counts as not answering; a 404, a bad answer or a cancel is final at once.
+    /// The Streams page's read: one request, its playable rows and its link rows (every other reader takes `loadStreams`).
+    public func loadStreamPage(base: String, type: String, id: String) async throws -> StreamPage {
+        let j = try await getJSON("\(base)/stream/\(Stremio.enc(type))/\(Stremio.enc(id)).json")
+        return StreamPage(streams: Stremio.parseStreams(j), links: Stremio.parseStreamLinks(j))
+    }
+
+    /// `loadStreamPage`, asked once more after `pause` when the first failed for a passing reason.
+    public func loadStreamPageAskingTwice(base: String, type: String, id: String,
+                                          pause: UInt64 = 2_000_000_000) async throws -> StreamPage {
+        do {
+            return try await loadStreamPage(base: base, type: type, id: id)
+        } catch {
+            guard Stremio.worthAskingAgain(error), !Task.isCancelled else { throw error }
+            try await Task.sleep(nanoseconds: pause)
+            return try await loadStreamPage(base: base, type: type, id: id)
+        }
+    }
+
     public func loadStreamsAskingTwice(base: String, type: String, id: String,
                                        pause: UInt64 = 2_000_000_000) async throws -> [StreamItem] {
         do {
@@ -283,6 +301,19 @@ public struct Stremio: Sendable {
                 for (k, v) in req { if let v = v as? String { item.headers[k] = v } }
             }
             return item
+        }
+    }
+
+    /// Rows with no address and no torrent but a web page (`externalUrl`), with a name or a text to show.
+    public static func parseStreamLinks(_ j: JSONObject) -> [StreamLink] {
+        j.objs("streams").compactMap { s in
+            guard s.str("url").isEmpty, s.str("infoHash").isEmpty else { return nil }
+            let u = s.str("externalUrl").trimmingCharacters(in: .whitespaces)
+            guard isWeb(u) else { return nil }
+            let name = s.str("name").trimmingCharacters(in: .whitespacesAndNewlines)
+            let text = (s.text("title") ?? s.str("description")).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty || !text.isEmpty else { return nil }
+            return StreamLink(name: String(name.prefix(200)), title: String(text.prefix(600)), url: u)
         }
     }
 

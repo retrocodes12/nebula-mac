@@ -116,6 +116,22 @@ public struct StreamItem: Equatable, Hashable, Sendable {
     public init(name: String, title: String, url: String) { self.name = name; self.title = title; self.url = url }
 }
 
+/// A stream row that only opens a web page (the protocol's `externalUrl`): a locked sports channel's "Watch an ad to
+/// unlock Live TV" and donation cards. Nothing plays from it; the Streams page shows it and opens the page (2026-11-17).
+public struct StreamLink: Equatable, Hashable, Sendable {
+    public var name: String
+    public var title: String
+    public var url: String
+    public init(name: String, title: String, url: String) { self.name = name; self.title = title; self.url = url }
+}
+
+/// One add-on's answer for the Streams page: the rows that play and the rows that only link to a page.
+public struct StreamPage: Equatable, Sendable {
+    public var streams: [StreamItem]
+    public var links: [StreamLink]
+    public init(streams: [StreamItem], links: [StreamLink]) { self.streams = streams; self.links = links }
+}
+
 /// One episode of a series (a meta `videos` entry).
 public struct Episode: Equatable, Hashable, Identifiable, Sendable {
     public var id: String
