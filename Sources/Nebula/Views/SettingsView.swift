@@ -19,148 +19,56 @@ struct SettingsView: View {
     /// A colour of one's own is drawn at once while the picker moves, and kept once it rests.
     @State private var ownTask: Task<Void, Never>?
 
+    /// The open page (a phone: nil = the groups; a Mac: nil = Profile) and the search's words.
+    @State var page: String?
+    @State var query = ""
+
     /// The screenshot rig's way to the lower sections (Shots posts a section id).
     static let shotsScroll = Notification.Name("nebula.shots.settingsScroll")
 
     var body: some View {
         ScrollViewReader { reader in
-        ScrollView {
-            VStack(alignment: .leading, spacing: 30) {
-                Text("Settings").scaledFont(size: 30, weight: .bold).foregroundStyle(Theme.ink).padding(.top, 56)
-
-                section("Profile") { ProfilePanel() }
-
-                section("Who's watching") { WhoSettings() }
-
-                section("Appearance", id: "appearance") {
-                    Panel {
-                        PanelRow(title: "Accent", detail: "The one colour Nebula uses.") {
-                            // as many lines as the row needs: with every supporter colour there are seventeen
-                            FactsFlow(lineSpacing: 0) {
-                                ForEach(accentChoices, id: \.hex) { a in
-                                    Button(action: { ownTask?.cancel(); model.setAccent(a.hex) }) {
-                                        Circle().fill(Color(hex: a.hex)).frame(width: 22, height: 22)
-                                            .overlay(Circle().strokeBorder(.white, lineWidth: model.accentHex == a.hex ? 2 : 0).padding(-3))
-                                            .frame(width: 30, height: 30).contentShape(Rectangle())
-                                    }
-                                    .buttonStyle(.plain).help(a.name).accessibilityLabel(a.name)
-                                }
-                                if (model.profile?.rank ?? 0) >= 2 {
-                                    ColorPicker("Any colour", selection: ownColour, supportsOpacity: false)
-                                        .labelsHidden().help("Any colour").frame(minWidth: 30, minHeight: 30).padding(.leading, 4)
-                                }
-                            }
-                        }
-                        // the panel stays as wide as the others when the swatches go under the words
+        Group {
+            #if os(macOS)
+            // a Mac: the groups down the left, one page beside them
+            HStack(alignment: .top, spacing: 0) {
+                ScrollView { sidebar.padding(.horizontal, 14).padding(.top, 56).padding(.bottom, 30) }
+                    .frame(width: 270)
+                Rectangle().fill(Theme.line).frame(width: 1)
+                ScrollView {
+                    pageView(page ?? "profile")
+                        .readingCap(720, alignment: .leading)
+                        .padding(.horizontal, Theme.pad).padding(.top, 56).padding(.bottom, 50)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                }
-
-                section("Playback", id: "playback") {
-                    Panel {
-                        PanelRow(title: "Pick up where you left off", detail: "Start a title from the place you stopped.") {
-                            Toggle("", isOn: $resume).toggleStyle(.switch).labelsHidden().controlSize(.small)
-                        }
-                        Hairline()
-                        PanelRow(title: "Play the next episode", detail: "Offer it as the credits start, and go on when the episode ends.") {
-                            Toggle("", isOn: $autoplayNext).toggleStyle(.switch).labelsHidden().controlSize(.small)
-                        }
-                        Hairline()
-                        PanelRow(title: "Skip intros and recaps", detail: "For series: a Skip button while they play, or skip them by themselves.") {
-                            HStack(spacing: 6) {
-                                ForEach([("button", "Button"), ("auto", "Auto"), ("off", "Off")], id: \.0) { m in Chip(text: m.1, on: skipIntro == m.0) { skipIntro = m.0 } }
-                            }
-                        }
-                        Hairline()
-                        PanelRow(title: "Content advisory", detail: "The age rating and what to expect (violence, language, frightening scenes) for a few seconds as a film or episode starts.") {
-                            let _ = cwDrawn
-                            Toggle("", isOn: Binding(get: { model.prefs.advisory }, set: { model.prefs.advisory = $0; cwDrawn &+= 1 }))
-                                .toggleStyle(.switch).labelsHidden().controlSize(.small)
-                        }
-                        Hairline()
-                        PanelRow(title: "Up next in Continue Watching", detail: "After you finish an episode, the next one waits in the row.") {
-                            let _ = cwDrawn
-                            Toggle("", isOn: Binding(get: { model.prefs.cwNext }, set: { model.prefs.cwNext = $0; cwDrawn &+= 1; model.progressVersion += 1 }))
-                                .toggleStyle(.switch).labelsHidden().controlSize(.small)
-                        }
-                        Hairline()
-                        PanelRow(title: "Show episodes not out yet", detail: "Up next can be an episode that airs soon, with its day on the card.") {
-                            let _ = cwDrawn
-                            Toggle("", isOn: Binding(get: { model.prefs.cwUnaired }, set: { model.prefs.cwUnaired = $0; cwDrawn &+= 1; model.progressVersion += 1 }))
-                                .toggleStyle(.switch).labelsHidden().controlSize(.small)
-                        }
-                        Hairline()
-                        PanelRow(title: "Offer to resume at start", detail: "Closed the app in the middle of something? It asks when you come back.") {
-                            let _ = cwDrawn
-                            Toggle("", isOn: Binding(get: { model.prefs.resumePrompt }, set: { model.prefs.resumePrompt = $0; cwDrawn &+= 1 }))
-                                .toggleStyle(.switch).labelsHidden().controlSize(.small)
-                        }
-                        Hairline()
-                        seekrRow
-                        Hairline()
-                        PanelRow(title: skipTitle, detail: skipDetail) {
-                            HStack(spacing: 6) { ForEach([5, 10, 15, 30], id: \.self) { s in Chip(text: "\(s) s", on: seekStep == s) { seekStep = s } } }
-                        }
-                        Hairline()
-                        PanelRow(title: "Picture quality", detail: "For streams that come in several qualities, such as live sports. Lower it on a slow connection.") {
-                            HStack(spacing: 6) { ForEach([0, 1080, 720, 480], id: \.self) { h in Chip(text: h == 0 ? "Best" : "\(h)p", on: maxHeight == h) { maxHeight = h } } }
-                        }
-                        Hairline()
-                        PanelRow(title: "Night mode", detail: "Sound for late nights: a soundtrack that carries its own night setting uses it, and speech is lifted on every stream. Also in the player's Audio menu.") {
-                            let _ = nightDrawn
-                            Toggle("", isOn: Binding(get: { model.prefs.night }, set: { model.prefs.night = $0; nightDrawn &+= 1 }))
-                                .toggleStyle(.switch).labelsHidden().controlSize(.small)
-                        }
-                        Hairline()
-                        PanelRow(title: "Decode on the graphics chip", detail: "\(Platform.hardwareDecodingGain) Switch it off if a film shows a broken picture.") {
-                            Toggle("", isOn: $hwdec).toggleStyle(.switch).labelsHidden().controlSize(.small)
-                        }
-                    }
-                }
-
-                // how each stream in a streams page is drawn: the designs with live previews, and Custom
-                section("Streams", id: "streams") { StreamCardSettings() }
-
-                // watch in sync with friends (PartyViews.swift)
-                section("Watch party", id: "party") { PartySettings() }
-
-                #if os(iOS)
-                // the iPhone only: Play on a film or an episode starts its best stream (AutoplaySettings, the phone's shell)
-                section("Autoplay the best stream", id: "autoplay") { AutoplaySettings() }
-                #endif
-
-                section("Subtitles", id: "subtitles") {
-                    Panel {
-                        SubStyleControls().padding(.vertical, 10)
-                    }
-                }
-
-                if model.supportVisible {
-                    section("Support Nebula", id: "support") { SupportPanel() }
-                }
-
-                section("About") {
-                    Panel {
-                        PanelRow(title: Platform.appTitle, detail: model.updateTag.map { "Version \(AppInfo.version) · \($0) is out" } ?? "Version \(AppInfo.version) · up to date") {
-                            Button(model.updateTag == nil ? "Releases" : "Get the update") {
-                                if let u = URL(string: AppInfo.repo + "/releases/latest") { Platform.open(u) }
-                            }
-                            .buttonStyle(PillButtonStyle(filled: model.updateTag != nil))
-                        }
-                        #if os(macOS)
-                        Hairline()
-                        PanelRow(title: "Keyboard", detail: "Space play or pause · ← → skip · ↑ ↓ volume · F full screen · M mute · C subtitles · A audio · I info · N next episode · Esc back") { EmptyView() }
-                        #endif
-                    }
                 }
             }
-            .readingCap(720, alignment: .leading)
-            .padding(.horizontal, Theme.pad).padding(.bottom, 50)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            #else
+            // a phone: a search and the groups; a page opens with a way back
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    if let id = page {
+                        Button { page = nil } label: {
+                            Label("Settings", systemImage: "chevron.left").scaledFont(size: 15, weight: .medium).foregroundStyle(Theme.ink)
+                        }
+                        .buttonStyle(.plain).padding(.top, 56).touchArea()
+                        pageView(id)
+                    } else {
+                        Text("Settings").scaledFont(size: 30, weight: .bold).foregroundStyle(Theme.ink).padding(.top, 56)
+                        searchField
+                        rootList
+                    }
+                }
+                .padding(.horizontal, Theme.pad).padding(.bottom, 50)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            #endif
         }
         .background(Theme.bg)
         .onReceive(NotificationCenter.default.publisher(for: SettingsView.shotsScroll)) { n in
-            if let id = n.object as? String { reader.scrollTo(id, anchor: .top) }
+            guard let id = n.object as? String else { return }
+            // the rig asks for a section: open its page, then scroll to what it named inside it
+            page = SettingsView.pageFor(id)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { reader.scrollTo(id, anchor: .top) }
         }
         }
         .onAppear {
@@ -174,6 +82,140 @@ struct SettingsView: View {
         .onChange(of: autoplayNext) { model.prefs.autoplayNext = $0 }
         .onChange(of: hwdec) { model.prefs.hardwareDecoding = $0 }
         .onChange(of: maxHeight) { model.prefs.maxHeight = $0 }
+    }
+
+
+    /// What was one long page of sections (2026-11-17): each section is a page, opened from the groups.
+    @ViewBuilder private func pageView(_ id: String) -> some View {
+        let p = pages.first { $0.id == id } ?? pages[0]
+        VStack(alignment: .leading, spacing: 14) {
+            Text(p.title).scaledFont(size: 30, weight: .bold).foregroundStyle(Theme.ink)
+            pageContent(p.id)
+        }
+        .id(p.id)
+    }
+
+    @ViewBuilder private func pageContent(_ id: String) -> some View {
+        switch id {
+        case "profile":
+            VStack(alignment: .leading, spacing: 22) {
+                ProfilePanel() 
+                WhoSettings() 
+            }
+        case "appearance":
+            Panel {
+                PanelRow(title: "Accent", detail: "The one colour Nebula uses.") {
+                    // as many lines as the row needs: with every supporter colour there are seventeen
+                    FactsFlow(lineSpacing: 0) {
+                        ForEach(accentChoices, id: \.hex) { a in
+                            Button(action: { ownTask?.cancel(); model.setAccent(a.hex) }) {
+                                Circle().fill(Color(hex: a.hex)).frame(width: 22, height: 22)
+                                    .overlay(Circle().strokeBorder(.white, lineWidth: model.accentHex == a.hex ? 2 : 0).padding(-3))
+                                    .frame(width: 30, height: 30).contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain).help(a.name).accessibilityLabel(a.name)
+                        }
+                        if (model.profile?.rank ?? 0) >= 2 {
+                            ColorPicker("Any colour", selection: ownColour, supportsOpacity: false)
+                                .labelsHidden().help("Any colour").frame(minWidth: 30, minHeight: 30).padding(.leading, 4)
+                        }
+                    }
+                }
+                // the panel stays as wide as the others when the swatches go under the words
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+        case "playback":
+            Panel {
+                PanelRow(title: "Pick up where you left off", detail: "Start a title from the place you stopped.") {
+                    Toggle("", isOn: $resume).toggleStyle(.switch).labelsHidden().controlSize(.small)
+                }
+                Hairline()
+                PanelRow(title: "Play the next episode", detail: "Offer it as the credits start, and go on when the episode ends.") {
+                    Toggle("", isOn: $autoplayNext).toggleStyle(.switch).labelsHidden().controlSize(.small)
+                }
+                Hairline()
+                PanelRow(title: "Skip intros and recaps", detail: "For series: a Skip button while they play, or skip them by themselves.") {
+                    HStack(spacing: 6) {
+                        ForEach([("button", "Button"), ("auto", "Auto"), ("off", "Off")], id: \.0) { m in Chip(text: m.1, on: skipIntro == m.0) { skipIntro = m.0 } }
+                    }
+                }
+                Hairline()
+                PanelRow(title: "Content advisory", detail: "The age rating and what to expect (violence, language, frightening scenes) for a few seconds as a film or episode starts.") {
+                    let _ = cwDrawn
+                    Toggle("", isOn: Binding(get: { model.prefs.advisory }, set: { model.prefs.advisory = $0; cwDrawn &+= 1 }))
+                        .toggleStyle(.switch).labelsHidden().controlSize(.small)
+                }
+                Hairline()
+                PanelRow(title: "Up next in Continue Watching", detail: "After you finish an episode, the next one waits in the row.") {
+                    let _ = cwDrawn
+                    Toggle("", isOn: Binding(get: { model.prefs.cwNext }, set: { model.prefs.cwNext = $0; cwDrawn &+= 1; model.progressVersion += 1 }))
+                        .toggleStyle(.switch).labelsHidden().controlSize(.small)
+                }
+                Hairline()
+                PanelRow(title: "Show episodes not out yet", detail: "Up next can be an episode that airs soon, with its day on the card.") {
+                    let _ = cwDrawn
+                    Toggle("", isOn: Binding(get: { model.prefs.cwUnaired }, set: { model.prefs.cwUnaired = $0; cwDrawn &+= 1; model.progressVersion += 1 }))
+                        .toggleStyle(.switch).labelsHidden().controlSize(.small)
+                }
+                Hairline()
+                PanelRow(title: "Offer to resume at start", detail: "Closed the app in the middle of something? It asks when you come back.") {
+                    let _ = cwDrawn
+                    Toggle("", isOn: Binding(get: { model.prefs.resumePrompt }, set: { model.prefs.resumePrompt = $0; cwDrawn &+= 1 }))
+                        .toggleStyle(.switch).labelsHidden().controlSize(.small)
+                }
+                Hairline()
+                seekrRow
+                Hairline()
+                PanelRow(title: skipTitle, detail: skipDetail) {
+                    HStack(spacing: 6) { ForEach([5, 10, 15, 30], id: \.self) { s in Chip(text: "\(s) s", on: seekStep == s) { seekStep = s } } }
+                }
+                Hairline()
+                PanelRow(title: "Picture quality", detail: "For streams that come in several qualities, such as live sports. Lower it on a slow connection.") {
+                    HStack(spacing: 6) { ForEach([0, 1080, 720, 480], id: \.self) { h in Chip(text: h == 0 ? "Best" : "\(h)p", on: maxHeight == h) { maxHeight = h } } }
+                }
+                Hairline()
+                PanelRow(title: "Night mode", detail: "Sound for late nights: a soundtrack that carries its own night setting uses it, and speech is lifted on every stream. Also in the player's Audio menu.") {
+                    let _ = nightDrawn
+                    Toggle("", isOn: Binding(get: { model.prefs.night }, set: { model.prefs.night = $0; nightDrawn &+= 1 }))
+                        .toggleStyle(.switch).labelsHidden().controlSize(.small)
+                }
+                Hairline()
+                PanelRow(title: "Decode on the graphics chip", detail: "\(Platform.hardwareDecodingGain) Switch it off if a film shows a broken picture.") {
+                    Toggle("", isOn: $hwdec).toggleStyle(.switch).labelsHidden().controlSize(.small)
+                }
+            }
+
+        case "streams":
+            StreamCardSettings() 
+        case "party":
+            PartySettings() 
+        #if os(iOS)
+        case "autoplay":
+            AutoplaySettings() 
+        #endif
+        case "subtitles":
+            Panel {
+                SubStyleControls().padding(.vertical, 10)
+            }
+
+        case "support":
+            SupportPanel() 
+        default:
+            Panel {
+                PanelRow(title: Platform.appTitle, detail: model.updateTag.map { "Version \(AppInfo.version) · \($0) is out" } ?? "Version \(AppInfo.version) · up to date") {
+                    Button(model.updateTag == nil ? "Releases" : "Get the update") {
+                        if let u = URL(string: AppInfo.repo + "/releases/latest") { Platform.open(u) }
+                    }
+                    .buttonStyle(PillButtonStyle(filled: model.updateTag != nil))
+                }
+                #if os(macOS)
+                Hairline()
+                PanelRow(title: "Keyboard", detail: "Space play or pause · ← → skip · ↑ ↓ volume · F full screen · M mute · C subtitles · A audio · I info · N next episode · Esc back") { EmptyView() }
+                #endif
+            }
+
+        }
     }
 
     // the step is the arrow keys' on a Mac, the double tap's and the skip buttons' on a phone
@@ -259,13 +301,6 @@ struct SettingsView: View {
         }
     }
 
-    private func section<C: View>(_ title: String, id: String? = nil, @ViewBuilder content: () -> C) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Eyebrow(title)
-            content()
-        }
-        .id(id ?? title)
-    }
 }
 
 /// A Nebula profile is an @handle and a password. Signed in, this Mac shares add-ons, progress
